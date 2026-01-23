@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>审核生成的题目</h2>
+<p>请勾选需要保存的题目，并进行必要的编辑。</p>
+
+<div id="questions-container">
+    {% for q in questions %}
+    <div class="card mb-3 question-card">
+        <div class="card-header d-flex justify-content-between">
+            <div>
+                <input type="checkbox" class="form-check-input select-q" checked>
+                <strong>题目 {{ loop.index }}</strong>
+            </div>
+            <div>
+                <span class="badge bg-secondary">建议分数: <input type="number" class="q-score" value="{{ q.score }}" style="width: 60px;"></span>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="mb-2">
+                <label>题目内容:</label>
+                <textarea class="form-control q-content" rows="3">{{ q.content }}</textarea>
+            </div>
+            <div class="mb-2">
+                <label>答案:</label>
+                <textarea class="form-control q-answer" rows="2">{{ q.answer }}</textarea>
+            </div>
+            <div class="mb-2">
+                <label>解析:</label>
+                <textarea class="form-control q-analysis" rows="2">{{ q.analysis }}</textarea>
+            </div>
+            
+            <!-- Hidden fields for context, assuming user selects them manually for now if missing -->
+            <div class="row">
+                <div class="col">
+                    <input type="number" class="form-control q-subject" placeholder="科目ID" value="1">
+                </div>
+                <div class="col">
+                    <input type="number" class="form-control q-chapter" placeholder="章节ID" value="1">
+                </div>
+                <div class="col">
+                    <input type="number" class="form-control q-type" placeholder="类型ID" value="1">
+                </div>
+                <div class="col">
+                    <input type="number" class="form-control q-diff" placeholder="难度ID" value="1">
+                </div>
+            </div>
+            <small class="text-muted">请手动确认归属信息(ID)</small>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<button id="save-btn" class="btn btn-primary btn-lg">保存选中题目</button>
+
+{% block scripts %}
+<script>
+    $('#save-btn').click(function() {
+        let data = [];
+        $('.question-card').each(function() {
+            if ($(this).find('.select-q').is(':checked')) {
+                data.push({
+                    content: $(this).find('.q-content').val(),
+                    answer: $(this).find('.q-answer').val(),
+                    analysis: $(this).find('.q-analysis').val(),
+                    score: $(this).find('.q-score').val(),
+                    subject_id: $(this).find('.q-subject').val(),
+                    chapter_id: $(this).find('.q-chapter').val(),
+                    type_id: $(this).find('.q-type').val(),
+                    difficulty_id: $(this).find('.q-diff').val()
+                });
+            }
+        });
+
+        $.ajax({
+            url: '/questions/save_generated',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(data),
+            success: function(res) {
+                alert('保存成功！');
+                window.location.href = '/questions';
+            }
+        });
+    });
+</script>
+{% endblock %}
+{% endblock %}

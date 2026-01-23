@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>AI智能出题 (高级版)</h2>
+<ul class="nav nav-tabs mb-3" id="myTab" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="chapter-tab" data-bs-toggle="tab" data-bs-target="#chapter" type="button">章节出题</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="similar-tab" data-bs-toggle="tab" data-bs-target="#similar" type="button">举一反三</button>
+    </li>
+</ul>
+
+<div class="tab-content" id="myTabContent">
+    <!-- Chapter Generation Mode -->
+    <div class="tab-pane fade show active" id="chapter" role="tabpanel">
+        <form method="POST" action="/questions/generate">
+            <input type="hidden" name="mode" value="chapter">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label>选择教材</label>
+                    <select class="form-select" id="textbook_select">
+                        <option value="">请选择教材</option>
+                        {% for tb in textbooks %}
+                        <option value="{{ tb.textbook_id }}">{{ tb.textbook_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label>选择章节 (ID输入)</label>
+                    <input type="number" name="chapter_id" class="form-control" placeholder="请输入章节ID" required>
+                    <small class="text-muted">请先去教材管理查看章节ID</small>
+                </div>
+            </div>
+            
+            <div class="row">
+                 <div class="col-md-6 mb-3">
+                    <label>题目类型 (默认100%)</label>
+                    <select name="type" class="form-select">
+                        <option value="选择题">选择题</option>
+                        <option value="填空题">填空题</option>
+                        <option value="简答题">简答题</option>
+                        <option value="判断题">判断题</option>
+                        <option value="计算题">计算题</option>
+                        <option value="写作题">写作题</option>
+                    </select>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label>难度 (默认100%)</label>
+                    <select name="difficulty" class="form-select">
+                        <option value="简单">简单</option>
+                        <option value="中等">中等</option>
+                        <option value="困难">困难</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label>生成数量</label>
+                    <input type="number" name="count" class="form-control" value="5" min="1" max="20">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label>试卷总分</label>
+                    <input type="number" name="total_score" class="form-control" value="100">
+                </div>
+                 <div class="col-md-4 mb-3">
+                    <label>额外描述</label>
+                    <input type="text" name="description" class="form-control" placeholder="例如：侧重考察概念理解">
+                </div>
+            </div>
+
+            <div class="alert alert-info">
+                <strong>提示：</strong> 目前使用简化配置。在完整版中，您可以自定义知识点、难度和题型的详细百分比分布。
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100">开始生成</button>
+        </form>
+    </div>
+
+    <!-- Similar Question Mode -->
+    <div class="tab-pane fade" id="similar" role="tabpanel">
+        <form method="POST" action="/questions/generate">
+            <input type="hidden" name="mode" value="similar">
+            <div class="mb-3">
+                <label>原题目ID</label>
+                <input type="number" name="question_id" class="form-control" required>
+            </div>
+            <button type="submit" class="btn btn-primary">生成相似题</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

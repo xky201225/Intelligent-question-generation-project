@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>题库列表</h2>
+
+<!-- Search Filters -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-3">
+                <select name="subject_id" class="form-select">
+                    <option value="">所有科目</option>
+                    {% for s in subjects %}
+                    <option value="{{ s.subject_id }}" {% if request.args.get('subject_id')|int == s.subject_id %}selected{% endif %}>{{ s.subject_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select name="type_id" class="form-select">
+                    <option value="">所有题型</option>
+                    {% for t in types %}
+                    <option value="{{ t.type_id }}" {% if request.args.get('type_id')|int == t.type_id %}selected{% endif %}>{{ t.type_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select name="difficulty_id" class="form-select">
+                    <option value="">所有难度</option>
+                    {% for d in difficulties %}
+                    <option value="{{ d.difficulty_id }}" {% if request.args.get('difficulty_id')|int == d.difficulty_id %}selected{% endif %}>{{ d.difficulty_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <button type="submit" class="btn btn-primary">筛选</button>
+                <a href="/questions" class="btn btn-secondary">重置</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="mb-3">
+    <a href="/questions/generate" class="btn btn-success">AI智能出题</a>
+</div>
+
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>科目</th>
+            <th>类型</th>
+            <th>难度</th>
+            <th>内容</th>
+            <th>分数</th>
+            <th>来源</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for q in questions %}
+        <tr>
+            <td>{{ q.question_id }}</td>
+            <td>{{ q.subject.subject_name }}</td>
+            <td>{{ q.type.type_name }}</td>
+            <td>{{ q.difficulty.difficulty_name }}</td>
+            <td>{{ q.question_content[:50] }}...</td>
+            <td>{{ q.question_score }}</td>
+            <td>
+                {% if q.is_ai_generated %}
+                <span class="badge bg-info">AI生成</span>
+                {% else %}
+                <span class="badge bg-secondary">人工上传</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

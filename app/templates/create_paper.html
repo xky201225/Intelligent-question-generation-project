@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>组卷中心</h2>
+<form method="POST">
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <input type="text" name="paper_name" class="form-control" placeholder="试卷名称" required>
+        </div>
+        <div class="col-md-3">
+            <select name="subject_id" class="form-select" required>
+                <option value="">选择科目</option>
+                {% for s in subjects %}
+                <option value="{{ s.subject_id }}">{{ s.subject_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <input type="text" name="creator" class="form-control" placeholder="出卷人" required>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary w-100">生成试卷</button>
+        </div>
+    </div>
+
+    <h4>选择题目 (试题篮)</h4>
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th width="50"><input type="checkbox" id="select-all"></th>
+                <th>内容</th>
+                <th>类型</th>
+                <th>难度</th>
+                <th>分数</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for q in questions %}
+            <tr>
+                <td><input type="checkbox" name="questions" value="{{ q.question_id }}"></td>
+                <td>{{ q.question_content[:80] }}...</td>
+                <td>{{ q.type.type_name }}</td>
+                <td>{{ q.difficulty.difficulty_name }}</td>
+                <td>{{ q.question_score }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</form>
+
+{% block scripts %}
+<script>
+    $('#select-all').click(function() {
+        $('input[name="questions"]').prop('checked', this.checked);
+    });
+</script>
+{% endblock %}
+{% endblock %}
