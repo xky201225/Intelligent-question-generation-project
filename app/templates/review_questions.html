@@ -11,12 +11,16 @@
             <div>
                 <input type="checkbox" class="form-check-input select-q" checked>
                 <strong>题目 {{ loop.index }}</strong>
+                {% if is_db_review %}
+                <span class="badge bg-warning">待校验 (ID: {{ q.question_id }})</span>
+                {% endif %}
             </div>
             <div>
                 <span class="badge bg-secondary">建议分数: <input type="number" class="q-score" value="{{ q.score }}" style="width: 60px;"></span>
             </div>
         </div>
         <div class="card-body">
+            <input type="hidden" class="q-id" value="{{ q.question_id or '' }}">
             <div class="mb-2">
                 <label>题目内容:</label>
                 <textarea class="form-control q-content" rows="3">{{ q.content }}</textarea>
@@ -30,28 +34,33 @@
                 <textarea class="form-control q-analysis" rows="2">{{ q.analysis }}</textarea>
             </div>
             
-            <!-- Hidden fields for context, assuming user selects them manually for now if missing -->
             <div class="row">
                 <div class="col">
-                    <input type="number" class="form-control q-subject" placeholder="科目ID" value="1">
+                    <label>科目ID</label>
+                    <input type="number" class="form-control q-subject" value="{{ q.subject_id or 1 }}">
                 </div>
                 <div class="col">
-                    <input type="number" class="form-control q-chapter" placeholder="章节ID" value="1">
+                    <label>章节ID</label>
+                    <input type="number" class="form-control q-chapter" value="{{ q.chapter_id or 1 }}">
                 </div>
                 <div class="col">
-                    <input type="number" class="form-control q-type" placeholder="类型ID" value="1">
+                    <label>类型ID</label>
+                    <input type="number" class="form-control q-type" value="{{ q.type_id or 1 }}">
                 </div>
                 <div class="col">
-                    <input type="number" class="form-control q-diff" placeholder="难度ID" value="1">
+                    <label>难度ID</label>
+                    <input type="number" class="form-control q-diff" value="{{ q.difficulty_id or 1 }}">
                 </div>
             </div>
-            <small class="text-muted">请手动确认归属信息(ID)</small>
         </div>
     </div>
     {% endfor %}
 </div>
 
-<button id="save-btn" class="btn btn-primary btn-lg">保存选中题目</button>
+<button id="save-btn" class="btn btn-primary btn-lg">确认入库 / 通过校验</button>
+{% if is_db_review %}
+<button id="reject-btn" class="btn btn-outline-danger btn-lg ms-2">拒绝所选</button>
+{% endif %}
 
 {% block scripts %}
 <script>
@@ -60,6 +69,7 @@
         $('.question-card').each(function() {
             if ($(this).find('.select-q').is(':checked')) {
                 data.push({
+                    question_id: $(this).find('.q-id').val() || null,
                     content: $(this).find('.q-content').val(),
                     answer: $(this).find('.q-answer').val(),
                     analysis: $(this).find('.q-analysis').val(),
@@ -78,8 +88,32 @@
             contentType: 'application/json',
             data: JSON.stringify(data),
             success: function(res) {
-                alert('保存成功！');
+                alert('操作成功！');
                 window.location.href = '/questions';
+            }
+        });
+    });
+
+    $('#reject-btn').click(function() {
+        let ids = [];
+        $('.question-card').each(function() {
+            if ($(this).find('.select-q').is(':checked')) {
+                const id = $(this).find('.q-id').val();
+                if (id) ids.push(parseInt(id));
+            }
+        });
+        if (!ids.length) {
+            alert('请选择要拒绝的题目。');
+            return;
+        }
+        $.ajax({
+            url: '/questions/pending/reject',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({question_ids: ids}),
+            success: function() {
+                alert('已拒绝并删除所选待校验题目。');
+                window.location.reload();
             }
         });
     });

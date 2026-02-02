@@ -75,7 +75,7 @@ def questions():
     type_id = request.args.get('type_id')
     difficulty_id = request.args.get('difficulty_id')
     
-    query = QuestionBank.query
+    query = QuestionBank.query.filter_by(status=1) # Only show active/published questions
     if subject_id:
         query = query.filter_by(subject_id=subject_id)
     if type_id:
@@ -93,6 +93,23 @@ def questions():
     return render_template('questions.html', questions=questions, 
                            subjects=subjects, types=types, difficulties=difficulties)
 
+@bp.route('/questions/pending')
+def pending_questions():
+    questions = QuestionBank.query.filter_by(status=0).order_by(QuestionBank.create_time.desc()).all()
+    return render_template('review_questions.html', questions=[
+        {
+            'question_id': q.question_id,
+            'content': q.question_content,
+            'answer': q.question_answer,
+            'analysis': q.question_analysis,
+            'score': q.question_score,
+            'subject_id': q.subject_id,
+            'chapter_id': q.chapter_id,
+            'type_id': q.type_id,
+            'difficulty_id': q.difficulty_id
+        } for q in questions
+    ], is_db_review=True) # Special flag for template to handle DB objects vs JSON objects if needed
+
 @bp.route('/questions/generate', methods=['GET', 'POST'])
 def generate_questions():
     if request.method == 'POST':
@@ -107,11 +124,10 @@ def generate_questions():
             description = request.form.get('description', '')
             
             # Knowledge Points (parsed from form, simplified for now)
-            # In a real UI we'd have dynamic fields. Here we assume a single string or default.
             knowledge = [{"name": "综合知识", "percentage": 100}] 
             
             # Difficulty
-            diff_level = request.form.get('difficulty') # "简单", "中等", "困难"
+            diff_level = request.form.get('difficulty') 
             difficulty = {diff_level: 100} if diff_level else {"中等": 100}
             
             # Types
@@ -142,9 +158,6 @@ def generate_questions():
             q_id = request.form.get('question_id')
             original = QuestionBank.query.get(q_id)
             if original:
-                # We can use the text content generation for similarity
-                # Or keep the simple one. Let's keep simple for now as 'similar' implies single question.
-                # But to use advanced logic:
                 generated_data = DeepSeekService.generate_questions_advanced(
                     subject=original.subject.subject_name,
                     knowledge=[{"name": "相关知识点", "percentage": 100}],
@@ -166,29 +179,55 @@ def generate_questions():
 def save_generated():
     data = request.json
     for item in data:
-        # Map fields from advanced JSON to DB model
-        # Advanced JSON has: stem, type, options, answer, answer_content, knowledge, difficulty, score
-        # DB has: question_content, question_answer, question_analysis, question_score, etc.
-        
-        # Find IDs for type/difficulty/subject (Simplified logic: default to 1 if not found)
-        # In production, we should lookup or create these.
-        
-        content = item.get('stem')
+        q_id = item.get('question_id')
+        # If this is a pending DB question, update it and publish.
+        if q_id:
+            q = QuestionBank.query.get(q_id)
+            if not q:
+                continue
+            q.subject_id = item.get('subject_id', q.subject_id)
+            q.chapter_id = item.get('chapter_id', q.chapter_id)
+            q.type_id = item.get('type_id', q.type_id)
+            q.difficulty_id = item.get('difficulty_id', q.difficulty_id)
+            q.question_content = item.get('content', q.question_content)
+            q.question_answer = item.get('answer', q.question_answer)
+            q.question_analysis = item.get('analysis', q.question_analysis)
+            q.question_score = item.get('score', q.question_score)
+            q.status = 1
+            continue
+
+        # Otherwise treat as new AI output and store as pending first.
+        content = item.get('stem') or item.get('content') or ''
         if item.get('options'):
-            content += f"\n选项: {json.dumps(item['options'], ensure_ascii=False)}"
-            
+            content = f"{content}\n选项: {json.dumps(item['options'], ensure_ascii=False)}"
+
         q = QuestionBank(
-            subject_id=item.get('subject_id', 1), # Passed from frontend or default
+            subject_id=item.get('subject_id', 1),
             chapter_id=item.get('chapter_id', 1),
             type_id=item.get('type_id', 1),
             difficulty_id=item.get('difficulty_id', 1),
             question_content=content,
             question_answer=item.get('answer', ''),
-            question_analysis=item.get('answer_content', ''),
+            question_analysis=item.get('answer_content') or item.get('analysis', ''),
             question_score=item.get('score', 5),
-            is_ai_generated=1
+            is_ai_generated=1,
+            status=0  # pending validation; publish after explicit approval
         )
         db.session.add(q)
+    db.session.commit()
+    return jsonify({'status': 'success'})
+
+@bp.route('/questions/pending/reject', methods=['POST'])
+def reject_pending_questions():
+    """
+    Reject (delete) pending questions by IDs.
+    """
+    payload = request.json or {}
+    ids = payload.get('question_ids') or []
+    if not isinstance(ids, list) or not ids:
+        return jsonify({'status': 'error', 'message': 'question_ids required'}), 400
+
+    QuestionBank.query.filter(QuestionBank.question_id.in_(ids), QuestionBank.status == 0).delete(synchronize_session=False)
     db.session.commit()
     return jsonify({'status': 'success'})
 
@@ -222,7 +261,7 @@ def create_paper():
         db.session.commit()
         return redirect(url_for('main.preview_paper', id=paper.paper_id))
         
-    questions = QuestionBank.query.all()
+    questions = QuestionBank.query.filter_by(status=1).all()
     subjects = SubjectDict.query.all()
     return render_template('create_paper.html', questions=questions, subjects=subjects)
 
@@ -271,3 +310,68 @@ def export_paper(id, format):
         path = ExportService.export_to_pdf(paper_data, questions, with_answers)
         
     return send_file(path, as_attachment=True)
+
+# --- Answer Sheet ---
+@bp.route('/paper/<int:paper_id>/answer_sheet/create', methods=['GET', 'POST'])
+def create_answer_sheet(paper_id):
+    paper = ExamPaper.query.get_or_404(paper_id)
+    
+    if request.method == 'POST':
+        sheet_name = request.form.get('sheet_name', f"{paper.paper_name}-答题卡")
+        
+        # Create Sheet
+        sheet = ExamAnswerSheet(
+            paper_id=paper.paper_id,
+            sheet_name=sheet_name,
+            template_config=json.dumps({'layout': 'A4', 'columns': 2}), # Default config
+            create_user=paper.creator
+        )
+        db.session.add(sheet)
+        db.session.commit()
+        
+        # Create Relations (Auto-map default styles)
+        relations = PaperQuestionRelation.query.filter_by(paper_id=paper_id).order_by(PaperQuestionRelation.question_sort).all()
+        for idx, rel in enumerate(relations, 1):
+            q = QuestionBank.query.get(rel.question_id)
+            # Find default style for this question type
+            default_style = AnswerAreaStyle.query.filter_by(type_id=q.type_id, is_default=1).first()
+            if not default_style:
+                # Fallback if no default style
+                default_style = AnswerAreaStyle.query.filter_by(type_id=q.type_id).first()
+            
+            if default_style:
+                sheet_rel = SheetQuestionRelation(
+                    sheet_id=sheet.sheet_id,
+                    question_id=q.question_id,
+                    style_id=default_style.style_id,
+                    area_sort=idx
+                )
+                db.session.add(sheet_rel)
+                
+        db.session.commit()
+        return redirect(url_for('main.preview_answer_sheet', sheet_id=sheet.sheet_id))
+        
+    # Check if exists
+    existing_sheet = ExamAnswerSheet.query.filter_by(paper_id=paper_id).first()
+    if existing_sheet:
+        return redirect(url_for('main.preview_answer_sheet', sheet_id=existing_sheet.sheet_id))
+        
+    return render_template('create_answer_sheet.html', paper=paper)
+
+@bp.route('/answer_sheet/<int:sheet_id>/preview')
+def preview_answer_sheet(sheet_id):
+    sheet = ExamAnswerSheet.query.get_or_404(sheet_id)
+    relations = SheetQuestionRelation.query.filter_by(sheet_id=sheet_id).order_by(SheetQuestionRelation.area_sort).all()
+    
+    areas = []
+    for rel in relations:
+        q = QuestionBank.query.get(rel.question_id)
+        style = AnswerAreaStyle.query.get(rel.style_id)
+        areas.append({
+            'sort': rel.area_sort,
+            'question_score': q.question_score, # Ideally get from paper relation, but simplified here
+            'style_name': style.style_name,
+            'config': json.loads(style.style_config)
+        })
+        
+    return render_template('preview_answer_sheet.html', sheet=sheet, areas=areas)
