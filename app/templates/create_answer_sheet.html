@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>创建答题卡</h2>
+<div class="card">
+    <div class="card-header">
+        试卷信息: {{ paper.paper_name }}
+    </div>
+    <div class="card-body">
+        <form method="POST">
+            <div class="mb-3">
+                <label>答题卡名称</label>
+                <input type="text" name="sheet_name" class="form-control" value="{{ paper.paper_name }}-答题卡" required>
+            </div>
+            
+            <div class="alert alert-info">
+                <strong>提示:</strong> 系统将根据题目类型自动匹配默认的答题区域样式（如：选择题匹配涂卡区，简答题匹配横线区）。
+            </div>
+            
+            <button type="submit" class="btn btn-primary">一键生成答题卡</button>
+            <a href="/paper/{{ paper.paper_id }}/preview" class="btn btn-secondary">返回试卷预览</a>
+        </form>
+    </div>
+</div>
+{% endblock %}

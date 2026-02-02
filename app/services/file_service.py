@@ -93,3 +93,83 @@ class FileService:
             })
             
         return chapters
+
+    @staticmethod
+    def heuristic_parse_questions(text):
+        """
+        Heuristically parse a question document into a list of questions.
+        Output: [{'content': str, 'answer': str, 'analysis': str}]
+        This is intentionally conservative and should be followed by manual review.
+        """
+        if not text:
+            return []
+
+        # Normalize whitespace
+        raw = text.replace('\r\n', '\n').replace('\r', '\n')
+        raw = re.sub(r'\n{3,}', '\n\n', raw).strip()
+        if not raw:
+            return []
+
+        # Split by common question number patterns:
+        # 1. xxx / 1、xxx / 1)xxx / （1）xxx / 一、xxx
+        split_pattern = re.compile(
+            r'(?m)^(?:\s*)(?:'
+            r'(\d{1,3})[\.、\)]\s+|'
+            r'（\d{1,3}）\s*|'
+            r'[一二三四五六七八九十]{1,3}、\s+'
+            r')'
+        )
+
+        # Find starts
+        starts = [m.start() for m in split_pattern.finditer(raw)]
+        if not starts:
+            # Fallback: treat whole doc as one question
+            blocks = [raw]
+        else:
+            starts.append(len(raw))
+            blocks = []
+            for i in range(len(starts) - 1):
+                block = raw[starts[i]:starts[i + 1]].strip()
+                if len(block) >= 5:
+                    blocks.append(block)
+
+        questions = []
+        for block in blocks:
+            # Try to extract answer/analysis markers
+            # Common markers: "答案:" "参考答案:" "解析:" "答案：" etc.
+            answer = ''
+            analysis = ''
+            content = block
+
+            m_ans = re.search(r'(?i)(?:答案|参考答案)\s*[:：]\s*', block)
+            m_ana = re.search(r'(?i)(?:解析|答案解析)\s*[:：]\s*', block)
+
+            if m_ans and m_ana:
+                # whichever comes first splits content vs rest
+                first = min(m_ans.start(), m_ana.start())
+                content = block[:first].strip()
+                # extract answer and analysis portions
+                if m_ans.start() < m_ana.start():
+                    answer = block[m_ans.end():m_ana.start()].strip()
+                    analysis = block[m_ana.end():].strip()
+                else:
+                    analysis = block[m_ana.end():m_ans.start()].strip()
+                    answer = block[m_ans.end():].strip()
+            elif m_ans:
+                content = block[:m_ans.start()].strip()
+                answer = block[m_ans.end():].strip()
+            elif m_ana:
+                content = block[:m_ana.start()].strip()
+                analysis = block[m_ana.end():].strip()
+
+            # Cleanup extremely short content
+            if len(content) < 5:
+                continue
+
+            questions.append({
+                'content': content,
+                'answer': answer,
+                'analysis': analysis
+            })
+
+        return questions

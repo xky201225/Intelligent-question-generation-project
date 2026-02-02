@@ -4,6 +4,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>试卷预览: {{ paper.paper_name }}</h2>
     <div>
+        <a href="/paper/{{ paper.paper_id }}/answer_sheet/create" class="btn btn-warning text-dark">生成答题卡</a>
         <a href="/paper/{{ paper.paper_id }}/export/word?with_answers=0" class="btn btn-outline-primary">导出Word(学生)</a>
         <a href="/paper/{{ paper.paper_id }}/export/word?with_answers=1" class="btn btn-primary">导出Word(教师)</a>
         <a href="/paper/{{ paper.paper_id }}/export/pdf?with_answers=0" class="btn btn-outline-danger">导出PDF(学生)</a>

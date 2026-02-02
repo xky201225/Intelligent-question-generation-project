@@ -1,5 +1,6 @@
 from app import create_app, db
-from app.models.models import SubjectDict, QuestionTypeDict, QuestionDifficultyDict
+from app.models.models import SubjectDict, QuestionTypeDict, QuestionDifficultyDict, AnswerAreaStyle
+import json
 
 app = create_app()
 
@@ -56,11 +57,13 @@ def init_db():
                 {'name': '选择题', 'code': 'CHOICE'},
                 {'name': '填空题', 'code': 'FILL'},
                 {'name': '简答题', 'code': 'SA'},
-                {'name': '判断题', 'code': 'JUDGE'}
+                {'name': '判断题', 'code': 'JUDGE'},
+                {'name': '计算题', 'code': 'CALC'},
+                {'name': '写作题', 'code': 'WRITE'}
             ]
             for t in types:
                 db.session.add(QuestionTypeDict(type_name=t['name'], type_code=t['code']))
-                
+        
         # Seed Difficulty
         if not QuestionDifficultyDict.query.first():
             diffs = [
@@ -70,6 +73,51 @@ def init_db():
             ]
             for d in diffs:
                 db.session.add(QuestionDifficultyDict(difficulty_name=d['name'], difficulty_level=d['level']))
+                
+        db.session.commit()
+        
+        # Seed Answer Area Styles
+        if not AnswerAreaStyle.query.first():
+            # Get Type IDs
+            choice_id = QuestionTypeDict.query.filter_by(type_code='CHOICE').first().type_id
+            fill_id = QuestionTypeDict.query.filter_by(type_code='FILL').first().type_id
+            sa_id = QuestionTypeDict.query.filter_by(type_code='SA').first().type_id
+            judge_id = QuestionTypeDict.query.filter_by(type_code='JUDGE').first().type_id
+            
+            styles = [
+                {
+                    'type_id': choice_id, 
+                    'name': '标准选择题涂卡', 
+                    'config': {'type': 'optical_mark', 'options': ['A', 'B', 'C', 'D'], 'layout': 'horizontal'},
+                    'default': 1
+                },
+                {
+                    'type_id': fill_id, 
+                    'name': '标准填空下划线', 
+                    'config': {'type': 'text_line', 'lines': 1},
+                    'default': 1
+                },
+                {
+                    'type_id': sa_id, 
+                    'name': '标准简答题横线', 
+                    'config': {'type': 'text_box', 'lines': 5},
+                    'default': 1
+                },
+                {
+                    'type_id': judge_id, 
+                    'name': '标准判断题涂卡', 
+                    'config': {'type': 'optical_mark', 'options': ['T', 'F'], 'layout': 'horizontal'},
+                    'default': 1
+                }
+            ]
+            
+            for s in styles:
+                db.session.add(AnswerAreaStyle(
+                    type_id=s['type_id'],
+                    style_name=s['name'],
+                    style_config=json.dumps(s['config']),
+                    is_default=s['default']
+                ))
         
         db.session.commit()
         print("Database initialized successfully!")

@@ -3,6 +3,16 @@
 {% block content %}
 <h2>审核生成的题目</h2>
 <p>请勾选需要保存的题目，并进行必要的编辑。</p>
+{% if paper_mode %}
+<div class="alert alert-info">
+    <strong>试卷信息：</strong>
+    名称：{{ paper_meta.paper_name }} |
+    科目ID：{{ paper_meta.subject_id }} |
+    出卷人：{{ paper_meta.creator }} |
+    目标总分：{{ paper_meta.total_score }}
+    <div class="text-muted mt-1">确认后会自动创建试卷并跳转到预览页（可导出Word/PDF）。</div>
+</div>
+{% endif %}
 
 <div id="questions-container">
     {% for q in questions %}
@@ -22,6 +32,10 @@
         <div class="card-body">
             <input type="hidden" class="q-id" value="{{ q.question_id or '' }}">
             <div class="mb-2">
+                <label>选项JSON（选择题等，可选）:</label>
+                <textarea class="form-control q-options" rows="2" placeholder='{"A":"...","B":"...","C":"...","D":"..."}'>{{ q.options_json or q.options or '' }}</textarea>
+            </div>
+            <div class="mb-2">
                 <label>题目内容:</label>
                 <textarea class="form-control q-content" rows="3">{{ q.content }}</textarea>
             </div>
@@ -32,6 +46,17 @@
             <div class="mb-2">
                 <label>解析:</label>
                 <textarea class="form-control q-analysis" rows="2">{{ q.analysis }}</textarea>
+            </div>
+
+            <div class="row mb-2">
+                <div class="col-md-6">
+                    <label>知识点小项（knowledge_part）</label>
+                    <input type="text" class="form-control q-knowledge-part" value="{{ q.knowledge_part or '' }}" placeholder="例如：判别式应用">
+                </div>
+                <div class="col-md-6">
+                    <label>标签（逗号分隔）</label>
+                    <input type="text" class="form-control q-tags" value="{{ q.tags or '' }}" placeholder="例如：一元二次方程,判别式">
+                </div>
             </div>
             
             <div class="row">
@@ -57,7 +82,9 @@
     {% endfor %}
 </div>
 
-<button id="save-btn" class="btn btn-primary btn-lg">确认入库 / 通过校验</button>
+<button id="save-btn" class="btn btn-primary btn-lg">
+    {% if paper_mode %}生成试卷并预览{% else %}确认入库 / 通过校验{% endif %}
+</button>
 {% if is_db_review %}
 <button id="reject-btn" class="btn btn-outline-danger btn-lg ms-2">拒绝所选</button>
 {% endif %}
@@ -70,9 +97,12 @@
             if ($(this).find('.select-q').is(':checked')) {
                 data.push({
                     question_id: $(this).find('.q-id').val() || null,
+                    options_json: $(this).find('.q-options').val(),
                     content: $(this).find('.q-content').val(),
                     answer: $(this).find('.q-answer').val(),
                     analysis: $(this).find('.q-analysis').val(),
+                    knowledge_part: $(this).find('.q-knowledge-part').val(),
+                    tags: $(this).find('.q-tags').val(),
                     score: $(this).find('.q-score').val(),
                     subject_id: $(this).find('.q-subject').val(),
                     chapter_id: $(this).find('.q-chapter').val(),
@@ -82,14 +112,22 @@
             }
         });
 
+        const paperMode = {{ 'true' if paper_mode else 'false' }};
+        const postUrl = paperMode ? '/paper/save_generated' : '/questions/save_generated';
+        const payload = paperMode ? {paper_meta: {{ paper_meta|tojson if paper_mode else '{}' }}, questions: data} : data;
+
         $.ajax({
-            url: '/questions/save_generated',
+            url: postUrl,
             method: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify(data),
+            data: JSON.stringify(payload),
             success: function(res) {
                 alert('操作成功！');
-                window.location.href = '/questions';
+                if (paperMode && res.paper_id) {
+                    window.location.href = `/paper/${res.paper_id}/preview`;
+                } else {
+                    window.location.href = '/questions';
+                }
             }
         });
     });

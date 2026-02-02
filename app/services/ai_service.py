@@ -34,7 +34,7 @@ class DeepSeekService:
             return None
 
     @classmethod
-    def generate_questions_advanced(cls, subject, knowledge, difficulty, count, question_types, total_score, description, chapter_context=None):
+    def generate_questions_advanced(cls, subject, knowledge, difficulty, count, question_types, total_score, description, chapter_context=None, tags_keywords=None):
         """
         Advanced generation logic ported from Streamlit app
         """
@@ -56,6 +56,10 @@ class DeepSeekService:
             context_trimmed = chapter_context[:4000]
             context_prompt = f"\n参考章节内容（请严格结合这些内容命题）：\n{context_trimmed}\n"
 
+        tag_prompt = ""
+        if tags_keywords:
+            tag_prompt = f"\n额外约束（必须紧扣这些标签/关键词命题，避免跑题）：\n{tags_keywords}\n"
+
         prompt = f"""
         你是专业的{subject}出题老师，需生成{count}道题目，总分{total_score}分。
         
@@ -68,6 +72,8 @@ class DeepSeekService:
         {type_prompt}
         
         {context_prompt}
+
+        {tag_prompt}
         
         必须包含所有指定的题型，并严格按照指定的数量占比生成。
         每题分值应根据难度和题型合理分配，总分应为{total_score}分，平均每题约{avg_score:.1f}分。
@@ -90,6 +96,7 @@ class DeepSeekService:
               "answer_content": "详细答案内容/解析",
               "knowledge": "{subject}",
               "knowledge_part": "该题所属的具体知识点部分",
+              "tags": ["标签1", "标签2"],
               "difficulty": "容易/中等/困难",
               "score": 题目分值（整数）
             }},

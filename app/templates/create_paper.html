@@ -2,6 +2,73 @@
 
 {% block content %}
 <h2>组卷中心</h2>
+
+<!-- Question Filters -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-3">
+                <select name="subject_id" class="form-select">
+                    <option value="">所有科目</option>
+                    {% for s in subjects %}
+                    <option value="{{ s.subject_id }}" {% if request.args.get('subject_id')|int == s.subject_id %}selected{% endif %}>{{ s.subject_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select name="textbook_id" class="form-select" id="p_textbook_select">
+                    <option value="">所有教材</option>
+                    {% for tb in textbooks %}
+                    <option value="{{ tb.textbook_id }}" {% if request.args.get('textbook_id')|int == tb.textbook_id %}selected{% endif %}>{{ tb.textbook_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select name="chapter_id" class="form-select" id="p_chapter_select">
+                    <option value="">{% if request.args.get('textbook_id') %}加载章节...{% else %}所有章节{% endif %}</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select name="type_id" class="form-select">
+                    <option value="">所有题型</option>
+                    {% for t in types %}
+                    <option value="{{ t.type_id }}" {% if request.args.get('type_id')|int == t.type_id %}selected{% endif %}>{{ t.type_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select name="difficulty_id" class="form-select">
+                    <option value="">所有难度</option>
+                    {% for d in difficulties %}
+                    <option value="{{ d.difficulty_id }}" {% if request.args.get('difficulty_id')|int == d.difficulty_id %}selected{% endif %}>{{ d.difficulty_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <input type="text" name="keyword" class="form-control" value="{{ request.args.get('keyword','') }}" placeholder="关键词（题干包含）">
+            </div>
+            <div class="col-md-3">
+                <input type="text" name="tags" class="form-control" value="{{ request.args.get('tags','') }}" placeholder="标签包含（逗号也可）">
+            </div>
+            <div class="col-md-3">
+                <input type="text" name="knowledge_part" class="form-control" value="{{ request.args.get('knowledge_part','') }}" placeholder="知识点小项包含">
+            </div>
+            <div class="col-md-2">
+                <input type="number" step="0.5" name="score_min" class="form-control" value="{{ request.args.get('score_min','') }}" placeholder="分值≥">
+            </div>
+            <div class="col-md-2">
+                <input type="number" step="0.5" name="score_max" class="form-control" value="{{ request.args.get('score_max','') }}" placeholder="分值≤">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">筛选</button>
+            </div>
+            <div class="col-md-1">
+                <a href="/paper/create" class="btn btn-secondary w-100">重置</a>
+            </div>
+        </form>
+    </div>
+</div>
+
 <form method="POST">
     <div class="row mb-4">
         <div class="col-md-4">
@@ -31,7 +98,7 @@
                 <th>内容</th>
                 <th>类型</th>
                 <th>难度</th>
-                <th>分数</th>
+                <th width="140">分数(可改)</th>
             </tr>
         </thead>
         <tbody>
@@ -41,7 +108,10 @@
                 <td>{{ q.question_content[:80] }}...</td>
                 <td>{{ q.type.type_name }}</td>
                 <td>{{ q.difficulty.difficulty_name }}</td>
-                <td>{{ q.question_score }}</td>
+                <td>
+                    <input type="number" step="0.5" min="0.5" class="form-control form-control-sm"
+                           name="score_{{ q.question_id }}" value="{{ q.question_score }}">
+                </td>
             </tr>
             {% endfor %}
         </tbody>
@@ -53,6 +123,39 @@
     $('#select-all').click(function() {
         $('input[name="questions"]').prop('checked', this.checked);
     });
+
+    function loadChaptersForTextbook(textbookId, selectedChapterId) {
+        $('#p_chapter_select').empty();
+        if (!textbookId) {
+            $('#p_chapter_select').append(`<option value="">所有章节</option>`);
+            return;
+        }
+        $('#p_chapter_select').append(`<option value="">加载中...</option>`);
+        $.getJSON(`/api/textbooks/${textbookId}/chapters`, function(items) {
+            $('#p_chapter_select').empty();
+            $('#p_chapter_select').append(`<option value="">所有章节</option>`);
+            items.forEach(function(c) {
+                const indent = '&nbsp;'.repeat((c.chapter_level - 1) * 4);
+                const sel = (selectedChapterId && parseInt(selectedChapterId) === c.chapter_id) ? 'selected' : '';
+                $('#p_chapter_select').append(`<option value="${c.chapter_id}" ${sel}>${indent}${c.chapter_name}</option>`);
+            });
+        }).fail(function() {
+            $('#p_chapter_select').empty().append(`<option value="">章节加载失败</option>`);
+        });
+    }
+
+    $('#p_textbook_select').change(function() {
+        loadChaptersForTextbook($(this).val(), null);
+    });
+
+    // init load if textbook already selected
+    const tbId = $('#p_textbook_select').val();
+    const chId = "{{ request.args.get('chapter_id','') }}";
+    if (tbId) {
+        loadChaptersForTextbook(tbId, chId);
+    } else {
+        loadChaptersForTextbook('', '');
+    }
 </script>
 {% endblock %}
 {% endblock %}
