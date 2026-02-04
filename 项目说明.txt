@@ -61,3 +61,7 @@ API 接口模块 (backend/app/api/):
 - PaperGeneratePage.vue # [智能组卷] 页面。提供组卷策略（JSON）编辑器，支持在线预览策略并生成试卷。
 - PapersManagePage.vue  # [试卷管理] 页面。查看已生成的试卷，支持二次编辑、Word 导出及历史版本下载。
 - AnswerSheetsPage.vue  # [答题卡] 页面。管理答题卡样式库，配置答题卡结构及生成预览。
+
+需要注意的是其中backend/app/config.py中的数据库连接字符串需要根据实际部署环境进行配置，确保能够正确连接到 MySQL 数据库。
+此外，DeepSeek API Key 如下sk-3123383874c042e8a16e8d3e93c80810，在config.py的十六行。
+请注意推送之前在config.py中删除该密钥以防泄露。
