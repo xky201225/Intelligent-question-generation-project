@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus, Refresh, Edit, Delete, Check } from '@element-plus/icons-vue'
 import { http } from '../api/http'
 
 const loading = ref(false)
@@ -174,8 +175,8 @@ onMounted(async () => {
     <el-tabs v-model="activeTab">
       <el-tab-pane name="styles" label="样式库">
         <div class="toolbar">
-          <el-button type="primary" @click="openCreateStyle">新增样式</el-button>
-          <el-button @click="loadStyles">刷新</el-button>
+          <el-button type="primary" @click="openCreateStyle" :icon="Plus">新增样式</el-button>
+          <el-button @click="loadStyles" :icon="Refresh">刷新</el-button>
         </div>
 
         <el-table :data="styles" height="620">
@@ -183,10 +184,10 @@ onMounted(async () => {
           <el-table-column prop="type_id" label="题型ID" width="100" />
           <el-table-column prop="style_name" label="样式名称" min-width="260" />
           <el-table-column prop="is_default" label="默认" width="90" />
-          <el-table-column fixed="right" label="操作" width="160">
+          <el-table-column fixed="right" label="操作" width="180">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openEditStyle(row)">编辑</el-button>
-              <el-button link type="danger" @click="removeStyle(row)">删除</el-button>
+              <el-button link type="primary" @click="openEditStyle(row)" :icon="Edit">编辑</el-button>
+              <el-button link type="danger" @click="removeStyle(row)" :icon="Delete">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -235,8 +236,8 @@ onMounted(async () => {
               </el-select>
             </div>
             <div class="toolbar">
-              <el-button :disabled="!selectedPaperId" type="primary" @click="buildSheetFromPaper">生成/刷新答题卡</el-button>
-              <el-button :disabled="!selectedPaperId" @click="loadSheets">刷新</el-button>
+              <el-button :disabled="!selectedPaperId" type="primary" @click="buildSheetFromPaper" :icon="Refresh">生成/刷新答题卡</el-button>
+              <el-button :disabled="!selectedPaperId" @click="loadSheets" :icon="Refresh">刷新</el-button>
             </div>
 
             <el-table
@@ -260,7 +261,7 @@ onMounted(async () => {
             <template #header>
               <div class="header">
                 <div>题目-样式绑定</div>
-                <el-button type="primary" :disabled="!selectedSheetId" @click="saveSheetItems">保存</el-button>
+                <el-button type="primary" :disabled="!selectedSheetId" @click="saveSheetItems" :icon="Check">保存</el-button>
               </div>
             </template>
 

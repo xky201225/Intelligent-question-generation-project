@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Plus, Edit, Delete, Upload, Download } from '@element-plus/icons-vue'
 import { http } from '../api/http'
 
 const loading = ref(false)
@@ -11,12 +12,13 @@ const types = ref([])
 const difficulties = ref([])
 const textbooks = ref([])
 const chapters = ref([])
+const chapterTree = ref([])
 
 const filter = reactive({
   q: '',
   subject_id: null,
   textbook_id: null,
-  chapter_id: null,
+  chapter_id: [],
   type_id: null,
   difficulty_id: null,
   review_status: 1,
@@ -43,8 +45,20 @@ const dialog = reactive({
     question_analysis: '',
     question_score: null,
     create_user: 'manual',
+    reviewer: '',
   },
 })
+
+const dialogTextbookId = ref(null)
+const dialogTextbooks = ref([])
+const dialogChapterTree = ref([])
+
+async function loadDialogTextbooks() {
+  const resp = await http.get('/textbooks', {
+    params: dialog.form.subject_id ? { subject_id: dialog.form.subject_id } : {},
+  })
+  dialogTextbooks.value = resp.data.items || []
+}
 
 async function loadDicts() {
   const [s, t, d] = await Promise.all([
@@ -67,10 +81,21 @@ async function loadTextbooks() {
 async function loadChapters() {
   if (!filter.textbook_id) {
     chapters.value = []
+    chapterTree.value = []
     return
   }
   const resp = await http.get(`/textbooks/${filter.textbook_id}/chapters`)
   chapters.value = resp.data.items || []
+  chapterTree.value = resp.data.tree || []
+}
+
+async function loadDialogChapters() {
+  if (!dialogTextbookId.value) {
+    dialogChapterTree.value = []
+    return
+  }
+  const resp = await http.get(`/textbooks/${dialogTextbookId.value}/chapters`)
+  dialogChapterTree.value = resp.data.tree || []
 }
 
 async function search() {
@@ -82,7 +107,7 @@ async function search() {
       page_size: filter.page_size,
       q: filter.q || undefined,
       subject_id: filter.subject_id || undefined,
-      chapter_id: filter.chapter_id || undefined,
+      chapter_id: Array.isArray(filter.chapter_id) && filter.chapter_id.length > 0 ? filter.chapter_id.join(',') : undefined,
       type_id: filter.type_id || undefined,
       difficulty_id: filter.difficulty_id || undefined,
       review_status: filter.review_status === null ? undefined : filter.review_status,
@@ -95,6 +120,15 @@ async function search() {
   } finally {
     loading.value = false
   }
+}
+
+function downloadTemplate() {
+  const link = document.createElement('a')
+  link.href = '/question_import_template.xlsx'
+  link.download = '题目导入模板.xlsx'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
 }
 
 async function importExcel(options) {
@@ -146,7 +180,7 @@ function openCreate() {
   dialog.form = {
     question_id: null,
     subject_id: filter.subject_id || null,
-    chapter_id: filter.chapter_id || null,
+    chapter_id: Array.isArray(filter.chapter_id) ? (filter.chapter_id[0] || null) : filter.chapter_id || null,
     type_id: filter.type_id || null,
     difficulty_id: filter.difficulty_id || null,
     question_content: '',
@@ -154,11 +188,15 @@ function openCreate() {
     question_analysis: '',
     question_score: null,
     create_user: 'manual',
+    reviewer: '',
   }
+  dialogTextbookId.value = filter.textbook_id || null
+  loadDialogTextbooks()
+  loadDialogChapters()
   dialog.visible = true
 }
 
-function openEdit(row) {
+async function openEdit(row) {
   dialog.mode = 'edit'
   dialog.form = {
     question_id: row.question_id,
@@ -171,6 +209,21 @@ function openEdit(row) {
     question_analysis: row.question_analysis,
     question_score: row.question_score,
     create_user: row.create_user || 'manual',
+    reviewer: row.reviewer || '',
+  }
+  dialogTextbookId.value = null
+  dialogTextbooks.value = []
+  dialogChapterTree.value = []
+  try {
+    if (row.chapter_id) {
+      const meta = await http.get(`/textbooks/chapters/${row.chapter_id}`)
+      dialogTextbookId.value = meta.data?.item?.textbook_id || null
+      dialog.form.subject_id = row.subject_id
+      await loadDialogTextbooks()
+      await loadDialogChapters()
+    }
+  } catch {
+    // ignore
   }
   dialog.visible = true
 }
@@ -238,7 +291,7 @@ onMounted(async () => {
           @change="
             async () => {
               filter.textbook_id = null
-              filter.chapter_id = null
+              filter.chapter_id = []
               await loadTextbooks()
               await search()
             }
@@ -254,44 +307,69 @@ onMounted(async () => {
           style="width: 220px"
           @change="
             async () => {
-              filter.chapter_id = null
+              filter.chapter_id = []
               await loadChapters()
             }
           "
+          @current-change="search"
         >
           <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name" :value="t.textbook_id" />
         </el-select>
 
-        <el-select v-model="filter.chapter_id" clearable placeholder="章节" style="width: 220px" @change="search">
-          <el-option v-for="c in chapters" :key="c.chapter_id" :label="c.chapter_name" :value="c.chapter_id" />
-        </el-select>
+        <el-tree-select
+          v-model="filter.chapter_id"
+          :data="chapterTree"
+          :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
+          node-key="chapter_id"
+          multiple
+          show-checkbox
+          check-strictly
+          collapse-tags
+          collapse-tags-tooltip
+          clearable
+          placeholder="章节（多选）"
+          style="width: 220px"
+          @change="search"
+        />
 
-        <el-select v-model="filter.type_id" clearable placeholder="题型" style="width: 140px" @change="search">
+        <el-select v-model="filter.type_id" clearable placeholder="题型" style="width: 120px" @change="search">
           <el-option v-for="t in types" :key="t.type_id" :label="t.type_name" :value="t.type_id" />
         </el-select>
 
-        <el-select v-model="filter.difficulty_id" clearable placeholder="难度" style="width: 140px" @change="search">
+        <el-select v-model="filter.difficulty_id" clearable placeholder="难度" style="width: 120px" @change="search">
           <el-option v-for="d in difficulties" :key="d.difficulty_id" :label="d.difficulty_name" :value="d.difficulty_id" />
         </el-select>
 
-        <el-select v-model="filter.review_status" placeholder="状态" style="width: 140px" @change="search">
+        <el-select v-model="filter.review_status" clearable placeholder="审核状态" style="width: 120px" @change="search">
           <el-option label="已通过" :value="1" />
-          <el-option label="待校验" :value="0" />
+          <el-option label="待审核" :value="0" />
           <el-option label="已拒绝" :value="2" />
-          <el-option label="全部" :value="null" />
         </el-select>
 
-        <el-button :loading="loading" @click="search">查询</el-button>
+        <el-button type="default" @click="search" :icon="Search">查询</el-button>
       </div>
 
       <div class="rightActions">
-        <el-upload :show-file-list="false" :http-request="importExcel" accept=".xlsx,.xls">
-          <el-button>Excel导入</el-button>
+        <el-button type="info" plain @click="downloadTemplate" :icon="Download">下载模板</el-button>
+        <el-upload
+          action=""
+          :show-file-list="false"
+          accept=".xlsx,.xls"
+          :http-request="importExcel"
+          style="display: inline-flex; margin-right: 10px"
+        >
+          <el-button :icon="Upload">Excel导入</el-button>
         </el-upload>
-        <el-upload :show-file-list="false" :http-request="importWord" accept=".docx">
-          <el-button>Word导入</el-button>
+        <el-upload
+          action=""
+          :show-file-list="false"
+          accept=".docx"
+          :http-request="importWord"
+          style="display: inline-flex; margin-right: 10px"
+        >
+          <el-button :icon="Upload">Word导入</el-button>
         </el-upload>
-        <el-button type="primary" @click="openCreate">新增题目</el-button>
+        <el-button type="primary" @click="openCreate" :icon="Plus">新增题目</el-button>
       </div>
     </div>
 
@@ -300,10 +378,26 @@ onMounted(async () => {
     <el-card>
       <el-table :data="data.items" :loading="loading" height="560">
         <el-table-column prop="question_id" label="ID" width="100" />
-        <el-table-column prop="subject_id" label="科目ID" width="100" />
-        <el-table-column prop="chapter_id" label="章节ID" width="100" />
-        <el-table-column prop="type_id" label="题型ID" width="100" />
-        <el-table-column prop="difficulty_id" label="难度ID" width="100" />
+        <el-table-column label="科目" width="140">
+          <template #default="{ row }">
+            {{ row.subject_name || row.subject_id }}
+          </template>
+        </el-table-column>
+        <el-table-column label="章节" width="220">
+          <template #default="{ row }">
+            {{ row.chapter_name || row.chapter_id }}
+          </template>
+        </el-table-column>
+        <el-table-column label="题型" width="140">
+          <template #default="{ row }">
+            {{ row.type_name || row.type_id }}
+          </template>
+        </el-table-column>
+        <el-table-column label="难度" width="120">
+          <template #default="{ row }">
+            {{ row.difficulty_name || row.difficulty_id }}
+          </template>
+        </el-table-column>
         <el-table-column prop="question_score" label="分值" width="90" />
         <el-table-column prop="review_status" label="状态" width="90" />
         <el-table-column label="题干" min-width="320">
@@ -311,10 +405,10 @@ onMounted(async () => {
             <div class="contentCell">{{ row.question_content }}</div>
           </template>
         </el-table-column>
-        <el-table-column fixed="right" label="操作" width="160">
+        <el-table-column fixed="right" label="操作" width="180">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <el-button link type="primary" @click="openEdit(row)" :icon="Edit">编辑</el-button>
+            <el-button link type="danger" @click="remove(row)" :icon="Delete">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -338,17 +432,63 @@ onMounted(async () => {
 
     <el-dialog v-model="dialog.visible" :title="dialog.mode === 'create' ? '新增题目' : '编辑题目'" width="720px">
       <el-form label-width="90px">
-        <el-form-item label="科目ID">
-          <el-input-number v-model="dialog.form.subject_id" :min="1" style="width: 100%" />
+        <el-form-item label="科目">
+          <el-select
+            v-model="dialog.form.subject_id"
+            placeholder="科目"
+            style="width: 100%"
+            filterable
+            @change="
+              async () => {
+                dialogTextbookId = null
+                dialog.form.chapter_id = null
+                dialogChapterTree = []
+                await loadDialogTextbooks()
+              }
+            "
+          >
+            <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
+          </el-select>
         </el-form-item>
-        <el-form-item label="章节ID">
-          <el-input-number v-model="dialog.form.chapter_id" :min="1" style="width: 100%" />
+        <el-form-item label="教材">
+          <el-select
+            v-model="dialogTextbookId"
+            placeholder="教材"
+            style="width: 100%"
+            filterable
+            clearable
+            @change="
+              async () => {
+                dialog.form.chapter_id = null
+                await loadDialogChapters()
+              }
+            "
+          >
+            <el-option v-for="t in dialogTextbooks" :key="t.textbook_id" :label="t.textbook_name" :value="t.textbook_id" />
+          </el-select>
         </el-form-item>
-        <el-form-item label="题型ID">
-          <el-input-number v-model="dialog.form.type_id" :min="1" style="width: 100%" />
+        <el-form-item label="章节">
+          <el-tree-select
+            v-model="dialog.form.chapter_id"
+            :data="dialogChapterTree"
+            :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
+            node-key="chapter_id"
+            check-strictly
+            clearable
+            placeholder="章节"
+            style="width: 100%"
+            :disabled="!dialogTextbookId"
+          />
         </el-form-item>
-        <el-form-item label="难度ID">
-          <el-input-number v-model="dialog.form.difficulty_id" :min="1" style="width: 100%" />
+        <el-form-item label="题型">
+          <el-select v-model="dialog.form.type_id" placeholder="题型" style="width: 100%" filterable>
+            <el-option v-for="t in types" :key="t.type_id" :label="t.type_name" :value="t.type_id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="难度">
+          <el-select v-model="dialog.form.difficulty_id" placeholder="难度" style="width: 100%" filterable>
+            <el-option v-for="d in difficulties" :key="d.difficulty_id" :label="d.difficulty_name" :value="d.difficulty_id" />
+          </el-select>
         </el-form-item>
         <el-form-item label="分值">
           <el-input-number v-model="dialog.form.question_score" :min="0" :step="0.5" style="width: 100%" />
@@ -361,6 +501,9 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item label="解析">
           <el-input v-model="dialog.form.question_analysis" type="textarea" :rows="3" />
+        </el-form-item>
+        <el-form-item label="审核人" v-if="dialog.mode === 'edit'">
+          <el-input v-model="dialog.form.reviewer" disabled />
         </el-form-item>
       </el-form>
       <template #footer>

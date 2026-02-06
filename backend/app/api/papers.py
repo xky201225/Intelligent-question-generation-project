@@ -202,6 +202,124 @@ def generate_and_save():
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 
 
+@papers_bp.post("/manual")
+def create_manual_paper():
+    payload = request.get_json(silent=True) or {}
+    creator = payload.get("creator") or "creator"
+    exam_duration = payload.get("exam_duration")
+    is_closed_book = payload.get("is_closed_book")
+    paper_name = payload.get("paper_name") or "未命名试卷"
+    paper_desc = payload.get("paper_desc") or ""
+    subject_id = payload.get("subject_id")
+    items = payload.get("items") or []
+
+    if not subject_id:
+        return jsonify({"error": {"message": "subject_id 必填", "type": "BadRequest"}}), 400
+    if not isinstance(items, list) or not items:
+        return jsonify({"error": {"message": "items 必须是非空数组", "type": "BadRequest"}}), 400
+
+    normalized_items: list[dict] = []
+    seen_qids: set[int] = set()
+    seen_sorts: set[int] = set()
+    for idx, it in enumerate(items, start=1):
+        qid = it.get("question_id")
+        if not qid:
+            return jsonify({"error": {"message": f"items[{idx}].question_id 必填", "type": "BadRequest"}}), 400
+        try:
+            qid = int(qid)
+        except Exception:
+            return jsonify({"error": {"message": f"items[{idx}].question_id 格式错误", "type": "BadRequest"}}), 400
+        if qid in seen_qids:
+            return jsonify({"error": {"message": "题目重复选择", "type": "BadRequest"}}), 400
+        seen_qids.add(qid)
+
+        sort = it.get("question_sort")
+        if sort is None or sort == "":
+            sort = idx
+        try:
+            sort = int(sort)
+        except Exception:
+            return jsonify({"error": {"message": f"items[{idx}].question_sort 格式错误", "type": "BadRequest"}}), 400
+        if sort < 1:
+            return jsonify({"error": {"message": "question_sort 必须 >= 1", "type": "BadRequest"}}), 400
+        if sort in seen_sorts:
+            return jsonify({"error": {"message": "题号重复，请调整后再保存", "type": "BadRequest"}}), 400
+        seen_sorts.add(sort)
+
+        score = it.get("question_score")
+        if score is not None and score != "":
+            try:
+                score = float(score)
+            except Exception:
+                return jsonify({"error": {"message": f"items[{idx}].question_score 格式错误", "type": "BadRequest"}}), 400
+        else:
+            score = None
+
+        normalized_items.append({"question_id": qid, "question_sort": sort, "question_score": score})
+
+    qb = _table("question_bank")
+    paper = _table("exam_paper")
+    rel = _table("paper_question_relation")
+    session = get_session(current_app)
+    now = datetime.now()
+
+    try:
+        q_stmt = (
+            select(qb.c.question_id, qb.c.subject_id, qb.c.review_status, qb.c.question_score)
+            .where(qb.c.question_id.in_([x["question_id"] for x in normalized_items]))
+        )
+        rows = session.execute(q_stmt).mappings().all()
+        by_id = {int(r["question_id"]): dict(r) for r in rows}
+        if len(by_id) != len(normalized_items):
+            return jsonify({"error": {"message": "存在无效题目ID", "type": "BadRequest"}}), 400
+
+        total_score = 0.0
+        for it in normalized_items:
+            r = by_id[it["question_id"]]
+            if int(r.get("subject_id") or 0) != int(subject_id):
+                return jsonify({"error": {"message": "所选题目科目不一致", "type": "BadRequest"}}), 400
+            if int(r.get("review_status") or 0) != 1:
+                return jsonify({"error": {"message": "只能选择已通过校验的题目", "type": "BadRequest"}}), 400
+            if it["question_score"] is None:
+                it["question_score"] = float(r.get("question_score") or 0)
+            total_score += float(it["question_score"] or 0)
+
+        paper_data = {
+            "paper_name": paper_name,
+            "subject_id": int(subject_id),
+            "total_score": total_score,
+            "exam_duration": exam_duration,
+            "is_closed_book": is_closed_book,
+            "creator": creator,
+            "review_status": 0,
+            "paper_desc": paper_desc,
+            "create_time": now,
+            "update_time": now,
+        }
+
+        res = session.execute(insert(paper).values(**paper_data))
+        paper_id = res.inserted_primary_key[0] if res.inserted_primary_key else None
+        if not paper_id:
+            raise RuntimeError("创建试卷失败")
+
+        for it in sorted(normalized_items, key=lambda x: x["question_sort"]):
+            session.execute(
+                insert(rel).values(
+                    paper_id=paper_id,
+                    question_id=it["question_id"],
+                    question_sort=it["question_sort"],
+                    question_score=it["question_score"],
+                    create_time=now,
+                )
+            )
+
+        session.commit()
+        return jsonify({"paper_id": paper_id, "total_score": total_score, "question_count": len(normalized_items)})
+    except SQLAlchemyError as err:
+        session.rollback()
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
+
+
 @papers_bp.get("")
 def list_papers():
     paper = _table("exam_paper")

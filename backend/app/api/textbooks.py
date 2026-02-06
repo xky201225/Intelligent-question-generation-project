@@ -47,12 +47,6 @@ def _build_chapter_tree(rows: list[dict]) -> list[dict]:
     return roots
 
 
-def _chapter_summary_path(chapter_id: int) -> str:
-    base = os.path.join(current_app.config["UPLOAD_DIR"], "chapter_summaries")
-    os.makedirs(base, exist_ok=True)
-    return os.path.join(base, f"{chapter_id}.txt")
-
-
 @textbooks_bp.get("")
 def list_textbooks():
     subject_id = request.args.get("subject_id", type=int)
@@ -304,25 +298,48 @@ def delete_chapter(chapter_id: int):
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 
 
+@textbooks_bp.get("/chapters/<int:chapter_id>")
+def get_chapter(chapter_id: int):
+    ch = _table("textbook_chapter")
+    stmt = select(ch.c.chapter_id, ch.c.textbook_id, ch.c.chapter_name).where(ch.c.chapter_id == chapter_id)
+    try:
+        row = get_session(current_app).execute(stmt).mappings().first()
+        if row is None:
+            return jsonify({"error": {"message": "章节不存在", "type": "NotFound"}}), 404
+        return jsonify({"item": dict(row)})
+    except SQLAlchemyError as err:
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
+
+
 @textbooks_bp.get("/chapters/<int:chapter_id>/summary")
 def get_chapter_summary(chapter_id: int):
-    path = _chapter_summary_path(chapter_id)
-    if not os.path.exists(path):
-        return jsonify({"chapter_id": chapter_id, "summary": ""})
-    with open(path, "r", encoding="utf-8") as f:
-        return jsonify({"chapter_id": chapter_id, "summary": f.read()})
+    ch = _table("textbook_chapter")
+    stmt = select(ch.c.content).where(ch.c.chapter_id == chapter_id)
+    try:
+        content = get_session(current_app).execute(stmt).scalar_one_or_none()
+        return jsonify({"chapter_id": chapter_id, "summary": content or ""})
+    except SQLAlchemyError as err:
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 
 
 @textbooks_bp.put("/chapters/<int:chapter_id>/summary")
 def update_chapter_summary(chapter_id: int):
     payload = request.get_json(silent=True) or {}
     summary = payload.get("summary")
+    # 允许清空概要，所以 summary 可以为空字符串，但不能是 None (如果是 None 表示前端没传)
+    # 这里我们宽松一点，如果是 None 视为空字符串
     if summary is None:
-        return jsonify({"error": {"message": "summary 必填", "type": "BadRequest"}}), 400
-    path = _chapter_summary_path(chapter_id)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(str(summary))
-    return jsonify({"ok": True})
+        summary = ""
+        
+    ch = _table("textbook_chapter")
+    try:
+        session = get_session(current_app)
+        session.execute(update(ch).where(ch.c.chapter_id == chapter_id).values(content=summary))
+        session.commit()
+        return jsonify({"ok": True})
+    except SQLAlchemyError as err:
+        session.rollback()
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 
 
 @textbooks_bp.post("/chapters/<int:chapter_id>/summary/generate")
@@ -360,9 +377,11 @@ def generate_chapter_summary(chapter_id: int):
         client = get_deepseek_client()
         summary = client.chat(system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.2)
 
-        path = _chapter_summary_path(chapter_id)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(summary)
+        # 更新数据库
+        session.execute(update(ch).where(ch.c.chapter_id == chapter_id).values(content=summary))
+        session.commit()
+        
         return jsonify({"chapter_id": chapter_id, "summary": summary})
     except Exception as err:
+        session.rollback()
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500

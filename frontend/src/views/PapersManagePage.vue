@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh, Delete, Download, Check } from '@element-plus/icons-vue'
 import { http } from '../api/http'
 
 const loading = ref(false)
@@ -165,7 +166,7 @@ onMounted(async () => {
         <template #header>
           <div class="header">
             <div>试卷列表</div>
-            <el-button :loading="loading" @click="loadPapers">刷新</el-button>
+            <el-button :loading="loading" @click="loadPapers" :icon="Refresh">刷新</el-button>
           </div>
         </template>
         <el-table
@@ -186,7 +187,7 @@ onMounted(async () => {
           <el-table-column prop="review_status" label="状态" width="90" />
           <el-table-column fixed="right" label="操作" width="100">
             <template #default="{ row }">
-              <el-button link type="danger" @click="removePaper(row)">删除</el-button>
+              <el-button link type="danger" @click="removePaper(row)" :icon="Delete">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -197,8 +198,8 @@ onMounted(async () => {
           <div class="header">
             <div>试卷编辑与导出</div>
             <div class="actions">
-              <el-button :disabled="!selectedPaperId" @click="exportWord">Word导出</el-button>
-              <el-button :disabled="!selectedPaperId" @click="exportPdf">PDF导出</el-button>
+              <el-button :disabled="!selectedPaperId" @click="exportWord" :icon="Download">Word导出</el-button>
+              <el-button :disabled="!selectedPaperId" @click="exportPdf" :icon="Download">PDF导出</el-button>
             </div>
           </div>
         </template>
@@ -225,14 +226,14 @@ onMounted(async () => {
             </el-form-item>
           </el-form>
           <div class="inlineActions">
-            <el-button type="primary" @click="savePaper">保存试卷信息</el-button>
+            <el-button type="primary" @click="savePaper" :icon="Check">保存试卷信息</el-button>
           </div>
 
           <el-divider />
 
           <div class="inlineActions">
             <div class="subTitle">题目顺序与分值</div>
-            <el-button type="primary" @click="saveQuestions">保存顺序/分值</el-button>
+            <el-button type="primary" @click="saveQuestions" :icon="Check">保存顺序/分值</el-button>
           </div>
           <el-table :data="questions" height="360">
             <el-table-column prop="question_sort" label="序号" width="90">
@@ -262,7 +263,7 @@ onMounted(async () => {
             <el-table-column prop="filename" label="文件" min-width="220" />
             <el-table-column fixed="right" label="操作" width="120">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openDownload(selectedPaperId, row.version_id)">下载</el-button>
+                <el-button link type="primary" @click="openDownload(selectedPaperId, row.version_id)" :icon="Download">下载</el-button>
               </template>
             </el-table-column>
           </el-table>

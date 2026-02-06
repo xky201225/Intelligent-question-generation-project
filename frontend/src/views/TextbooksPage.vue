@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh, Plus, Operation, Edit, Delete, Upload, MagicStick, Check, Close } from '@element-plus/icons-vue'
 import { http } from '../api/http'
 
 const loading = ref(false)
@@ -294,8 +295,24 @@ async function removeChapter() {
   }
 }
 
+const showChapterTreeDrawer = ref(false)
+const showSummaryDialog = ref(false)
+
+async function handleSelectTextbook(row) {
+  selectedTextbook.value = row
+  await loadChapters(row?.textbook_id)
+  showChapterTreeDrawer.value = true
+}
+
+async function handleNodeClick(node) {
+  if (!node) return
+  selectedChapterId.value = node.chapter_id
+  await loadChapterSummary(node.chapter_id)
+  showSummaryDialog.value = true
+}
+
 watch(selectedChapterId, async (id) => {
-  await loadChapterSummary(id)
+  // await loadChapterSummary(id) // Moved to handleNodeClick
 })
 
 onMounted(async () => {
@@ -311,84 +328,74 @@ onMounted(async () => {
         <el-select v-model="filter.subject_id" clearable placeholder="按科目筛选" style="width: 220px" @change="loadTextbooks">
           <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
         </el-select>
-        <el-button :loading="loading" @click="loadTextbooks">刷新</el-button>
+        <el-button :loading="loading" @click="loadTextbooks" :icon="Refresh">刷新</el-button>
       </div>
-      <el-button type="primary" @click="openCreateTextbook">新增教材</el-button>
+      <el-button type="primary" @click="openCreateTextbook" :icon="Plus">新增教材</el-button>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" show-icon />
 
-    <div class="grid">
-      <el-card class="card" header="教材列表">
-        <el-table
-          :data="textbooks"
-          :loading="loading"
-          highlight-current-row
-          @current-change="
-            async (row) => {
-              selectedTextbook.value = row
-              await loadChapters(row?.textbook_id)
-            }
-          "
-          height="520"
-        >
-          <el-table-column prop="textbook_id" label="ID" width="90" />
-          <el-table-column prop="textbook_name" label="名称" min-width="200" />
-          <el-table-column prop="author" label="作者" width="140" />
-          <el-table-column fixed="right" label="操作" width="160">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="openEditTextbook(row)">编辑</el-button>
-              <el-button link type="danger" @click="removeTextbook(row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-card>
+    <el-card class="card" header="教材列表">
+      <el-table
+        :data="textbooks"
+        :loading="loading"
+        highlight-current-row
+        height="calc(100vh - 180px)"
+      >
+        <el-table-column prop="textbook_id" label="ID" width="90" />
+        <el-table-column prop="textbook_name" label="名称" min-width="200" />
+        <el-table-column prop="author" label="作者" width="140" />
+        <el-table-column fixed="right" label="操作" width="300">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="handleSelectTextbook(row)" :icon="Operation">管理章节</el-button>
+            <el-button link type="primary" @click="openEditTextbook(row)" :icon="Edit">编辑</el-button>
+            <el-button link type="danger" @click="removeTextbook(row)" :icon="Delete">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
 
-      <el-card class="card" header="章节树">
-        <template #header>
-          <div class="cardHeader">
-            <div>章节树</div>
-            <div class="actions">
-              <el-upload :show-file-list="false" :http-request="importChaptersExcel" accept=".xlsx,.xls">
-                <el-button size="small">Excel导入章节</el-button>
-              </el-upload>
-              <el-button size="small" @click="openCreateChapter('root')">新增根章节</el-button>
-              <el-button size="small" @click="openCreateChapter('child')">新增子章节</el-button>
-              <el-button size="small" @click="openEditChapter">编辑</el-button>
-              <el-button size="small" type="danger" @click="removeChapter">删除</el-button>
-            </div>
+    <!-- 章节树 Drawer -->
+    <el-drawer v-model="showChapterTreeDrawer" :title="selectedTextbook ? `[${selectedTextbook.textbook_name}] 章节管理` : '章节管理'" size="50%">
+      <div class="drawer-header-actions">
+        <el-upload :show-file-list="false" :http-request="importChaptersExcel" accept=".xlsx,.xls">
+          <el-button size="small" :icon="Upload">Excel导入章节</el-button>
+        </el-upload>
+        <el-button size="small" @click="openCreateChapter('root')" :icon="Plus">新增根章节</el-button>
+        <el-button size="small" @click="openCreateChapter('child')" :icon="Plus">新增子章节</el-button>
+        <el-button size="small" @click="openEditChapter" :icon="Edit">编辑</el-button>
+        <el-button size="small" type="danger" @click="removeChapter" :icon="Delete">删除</el-button>
+      </div>
+      
+      <el-tree
+        :data="chapterTree"
+        node-key="chapter_id"
+        :props="{ label: 'chapter_name', children: 'children' }"
+        highlight-current
+        default-expand-all
+        @node-click="handleNodeClick"
+        class="chapter-tree"
+      />
+    </el-drawer>
+
+    <!-- 章节概要 Dialog -->
+    <el-dialog v-model="showSummaryDialog" :title="selectedChapter ? `[${selectedChapter.chapter_name}] 章节概要` : '章节概要'" width="600px">
+      <div class="summaryBox">
+        <div class="summaryHeader">
+          <div></div>
+          <div class="summaryActions">
+            <el-button size="small" :loading="summaryLoading" @click="generateChapterSummary" :icon="MagicStick">AI生成</el-button>
+            <el-button size="small" type="primary" :loading="summaryLoading" @click="saveChapterSummary" :icon="Check">保存</el-button>
           </div>
-        </template>
-
-        <div v-if="!selectedTextbook" class="placeholder">请选择左侧教材查看章节</div>
-        <el-tree
-          v-else
-          :data="chapterTree"
-          node-key="chapter_id"
-          :props="{ label: 'chapter_name', children: 'children' }"
-          highlight-current
-          default-expand-all
-          @current-change="(node) => (selectedChapterId = node?.chapter_id || null)"
-        />
-
-        <div v-if="selectedTextbook" class="summaryBox">
-          <div class="summaryHeader">
-            <div>章节概要</div>
-            <div class="summaryActions">
-              <el-button size="small" :loading="summaryLoading" @click="generateChapterSummary">AI生成</el-button>
-              <el-button size="small" type="primary" :loading="summaryLoading" @click="saveChapterSummary">保存</el-button>
-            </div>
-          </div>
-          <el-input
-            v-model="chapterSummary"
-            type="textarea"
-            :rows="8"
-            :disabled="!selectedChapterId"
-            placeholder="选择章节后可查看/编辑章节概要"
-          />
         </div>
-      </el-card>
-    </div>
+        <el-input
+          v-model="chapterSummary"
+          type="textarea"
+          :rows="12"
+          placeholder="章节概要内容..."
+        />
+      </div>
+    </el-dialog>
 
     <el-dialog v-model="textbookDialog.visible" :title="textbookDialog.mode === 'create' ? '新增教材' : '编辑教材'" width="520px">
       <el-form label-width="90px">
@@ -458,12 +465,6 @@ onMounted(async () => {
   gap: 12px;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 16px;
-}
-
 .card {
   width: 100%;
 }
@@ -500,5 +501,18 @@ onMounted(async () => {
 .summaryActions {
   display: flex;
   gap: 8px;
+}
+
+.drawer-header-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.chapter-tree {
+  border: 1px solid var(--el-border-color);
+  padding: 10px;
+  border-radius: 4px;
 }
 </style>

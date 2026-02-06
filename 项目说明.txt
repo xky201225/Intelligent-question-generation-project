@@ -65,3 +65,14 @@ API 接口模块 (backend/app/api/):
 需要注意的是其中backend/app/config.py中的数据库连接字符串需要根据实际部署环境进行配置，确保能够正确连接到 MySQL 数据库。
 此外，DeepSeek API Key 如下sk-3123383874c042e8a16e8d3e93c80810，在config.py的十六行。
 请注意推送之前在config.py中删除该密钥以防泄露。
+数据库采用远程数据库，不需要在自己电脑上配置数据库环境，数据库名字是exam_system-v3。
+项目启动步骤：
+1. 克隆代码库到本地。
+2. 安装后端依赖：在 backend/ 目录下运行 pip install -r requirements.txt。
+3. 配置环境变量：复制 .env.example 为 .env 并填写数据库连接信息和 DeepSeek API Key。打开终端，进入 backend/ 目录，运行命令：
+   cp .env.example .env
+   然后编辑 .env 文件，填写正确的数据库连接字符串和 DeepSeek API Key。之后保存退出。
+4. 启动后端服务：在 backend/ 目录下运行 python run.py。
+5. 安装前端依赖：在 frontend/ 目录下运行 npm install。
+6. 启动前端服务：在 frontend/ 目录下运行 npm run dev。
+7. 访问前端应用：打开浏览器，访问 http://localhost:5173 （默认端口）。

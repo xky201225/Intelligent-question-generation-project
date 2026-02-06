@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, ref } from 'vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { http } from '../api/http'
 
 const loading = ref(false)
@@ -35,7 +36,7 @@ onMounted(loadAll)
   <div class="page">
     <div class="header">
       <div class="title">基础字典</div>
-      <el-button :loading="loading" @click="loadAll">刷新</el-button>
+      <el-button :loading="loading" @click="loadAll" :icon="Refresh">刷新</el-button>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" show-icon />

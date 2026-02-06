@@ -46,29 +46,103 @@ def _decimal_or_none(v):
         return None
 
 
+def _parse_csv_ints(v: str | None) -> list[int]:
+    if v is None:
+        return []
+    if isinstance(v, str):
+        parts = [x.strip() for x in v.split(",") if x.strip()]
+        out: list[int] = []
+        for p in parts:
+            try:
+                out.append(int(p))
+            except Exception:
+                continue
+        return out
+    return []
+
+
 @questions_bp.get("")
 def search_questions():
     q = request.args.get("q", type=str)
     subject_id = request.args.get("subject_id", type=int)
-    chapter_id = request.args.get("chapter_id", type=int)
-    type_id = request.args.get("type_id", type=int)
-    difficulty_id = request.args.get("difficulty_id", type=int)
+    # chapter_id = request.args.get("chapter_id", type=int) # 旧逻辑
+    chapter_ids_str = request.args.get("chapter_id", type=str)
+    ids_str = request.args.get("ids", type=str)
+
+    type_ids_str = request.args.get("type_id", type=str)
+    difficulty_ids_str = request.args.get("difficulty_id", type=str)
+    textbook_id = request.args.get("textbook_id", type=int)
+    author = request.args.get("author", type=str)
+    publisher = request.args.get("publisher", type=str)
     review_status = request.args.get("review_status", type=int)
 
     page = max(1, request.args.get("page", default=1, type=int))
     page_size = min(100, max(1, request.args.get("page_size", default=20, type=int)))
 
     t = _table("question_bank")
+    ch = _table("textbook_chapter")
+    tb = _table("textbook")
+    sd = _table("subject_dict")
+    qtd = _table("question_type_dict")
+    qdd = _table("question_difficulty_dict")
+
+    from_ = (
+        t.outerjoin(ch, ch.c.chapter_id == t.c.chapter_id)
+        .outerjoin(tb, tb.c.textbook_id == ch.c.textbook_id)
+        .outerjoin(sd, sd.c.subject_id == t.c.subject_id)
+        .outerjoin(qtd, qtd.c.type_id == t.c.type_id)
+        .outerjoin(qdd, qdd.c.difficulty_id == t.c.difficulty_id)
+    )
 
     where = []
     if subject_id is not None:
         where.append(t.c.subject_id == subject_id)
-    if chapter_id is not None:
-        where.append(t.c.chapter_id == chapter_id)
-    if type_id is not None:
-        where.append(t.c.type_id == type_id)
-    if difficulty_id is not None:
-        where.append(t.c.difficulty_id == difficulty_id)
+    
+    # 新增：处理多选章节
+    if chapter_ids_str:
+        # 尝试逗号分割
+        try:
+            c_ids = [int(x) for x in chapter_ids_str.split(",") if x.strip()]
+            if c_ids:
+                if len(c_ids) == 1:
+                    where.append(t.c.chapter_id == c_ids[0])
+                else:
+                    where.append(t.c.chapter_id.in_(c_ids))
+        except ValueError:
+            pass
+
+    # 新增：处理 IDs 筛选
+    if ids_str:
+        try:
+            ids = [int(x) for x in ids_str.split(",") if x.strip()]
+            if ids:
+                if len(ids) == 1:
+                    where.append(t.c.question_id == ids[0])
+                else:
+                    where.append(t.c.question_id.in_(ids))
+        except ValueError:
+            pass
+
+    type_ids = _parse_csv_ints(type_ids_str)
+    if type_ids:
+        if len(type_ids) == 1:
+            where.append(t.c.type_id == type_ids[0])
+        else:
+            where.append(t.c.type_id.in_(type_ids))
+
+    difficulty_ids = _parse_csv_ints(difficulty_ids_str)
+    if difficulty_ids:
+        if len(difficulty_ids) == 1:
+            where.append(t.c.difficulty_id == difficulty_ids[0])
+        else:
+            where.append(t.c.difficulty_id.in_(difficulty_ids))
+
+    if textbook_id is not None:
+        where.append(tb.c.textbook_id == textbook_id)
+    if author:
+        where.append(tb.c.author.like(f"%{author}%"))
+    if publisher:
+        where.append(tb.c.publisher.like(f"%{publisher}%"))
     if review_status is not None:
         where.append(t.c.review_status == review_status)
     if q:
@@ -82,6 +156,14 @@ def search_questions():
             t.c.chapter_id,
             t.c.type_id,
             t.c.difficulty_id,
+            sd.c.subject_name.label("subject_name"),
+            ch.c.chapter_name.label("chapter_name"),
+            qtd.c.type_name.label("type_name"),
+            qdd.c.difficulty_name.label("difficulty_name"),
+            tb.c.textbook_id.label("textbook_id"),
+            tb.c.textbook_name.label("textbook_name"),
+            tb.c.author.label("author"),
+            tb.c.publisher.label("publisher"),
             t.c.question_content,
             t.c.question_answer,
             t.c.question_analysis,
@@ -95,13 +177,14 @@ def search_questions():
             t.c.create_time,
             t.c.update_time,
         )
+        .select_from(from_)
         .where(and_(*where) if where else True)
         .order_by(t.c.question_id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
 
-    count_stmt = select(func.count()).select_from(t).where(and_(*where) if where else True)
+    count_stmt = select(func.count()).select_from(from_).where(and_(*where) if where else True)
 
     try:
         session = get_session(current_app)

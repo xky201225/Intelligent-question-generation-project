@@ -1,5 +1,5 @@
 # 智能组卷系统 V3
-
+##一定要查看项目说明！！！
 ## 目录结构
 
 - backend/：Flask REST API（MySQL + AI + 导入导出）
