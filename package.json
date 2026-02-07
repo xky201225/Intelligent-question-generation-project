@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@wangeditor/editor": "^5.1.23",
+    "@wangeditor/editor-for-vue": "^1.0.2",
+    "file-saver": "^2.0.5",
+    "html-docx-js-typescript": "^0.1.5"
+  }
+}

@@ -301,13 +301,108 @@ def update_question(question_id: int):
 @questions_bp.delete("/<int:question_id>")
 def delete_question(question_id: int):
     t = _table("question_bank")
+    pqr = _table("paper_question_relation")
     try:
         session = get_session(current_app)
+        session.execute(delete(pqr).where(pqr.c.question_id == question_id))
         session.execute(delete(t).where(t.c.question_id == question_id))
         session.commit()
         return jsonify({"ok": True})
     except SQLAlchemyError as err:
         get_session(current_app).rollback()
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
+
+
+@questions_bp.post("/batch-delete")
+def batch_delete_questions():
+    payload = request.get_json(silent=True) or {}
+    ids = payload.get("ids")
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"error": {"message": "ids 必须是非空数组", "type": "BadRequest"}}), 400
+
+    t = _table("question_bank")
+    pqr = _table("paper_question_relation")
+    try:
+        session = get_session(current_app)
+        session.execute(delete(pqr).where(pqr.c.question_id.in_(ids)))
+        session.execute(delete(t).where(t.c.question_id.in_(ids)))
+        session.commit()
+        return jsonify({"ok": True})
+    except SQLAlchemyError as err:
+        session.rollback()
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
+
+
+@questions_bp.post("/batch-create")
+def batch_create_questions():
+    payload = request.get_json(silent=True) or {}
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        return jsonify({"error": {"message": "items 必须是非空数组", "type": "BadRequest"}}), 400
+
+    t = _table("question_bank")
+    session = get_session(current_app)
+    inserted_ids = []
+    
+    try:
+        for item in items:
+            # 简单的校验
+            if not item.get("question_content"):
+                continue
+                
+            score = item.get("question_score")
+            if score is not None:
+                try:
+                    score = Decimal(str(score))
+                except:
+                    score = None
+            
+            data = {
+                "subject_id": item.get("subject_id"),
+                "chapter_id": item.get("chapter_id"),
+                "type_id": item.get("type_id"),
+                "difficulty_id": item.get("difficulty_id"),
+                "question_content": item.get("question_content"),
+                "question_answer": item.get("question_answer"),
+                "question_analysis": item.get("question_analysis"),
+                "question_score": score,
+                "is_ai_generated": item.get("is_ai_generated", 0),
+                "source_question_ids": item.get("source_question_ids"),
+                "review_status": 0, # 待审核
+                "reviewer": None,
+                "create_user": item.get("create_user") or "import",
+            }
+            res = session.execute(insert(t).values(**data))
+            if res.inserted_primary_key:
+                inserted_ids.append(res.inserted_primary_key[0])
+        
+        session.commit()
+        return jsonify({"ok": True, "inserted_count": len(inserted_ids), "ids": inserted_ids})
+    except SQLAlchemyError as err:
+        session.rollback()
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
+
+
+@questions_bp.post("/check-dependencies")
+def check_dependencies():
+    payload = request.get_json(silent=True) or {}
+    ids = payload.get("ids")
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"dependencies": []})
+
+    pqr = _table("paper_question_relation")
+    ep = _table("exam_paper")
+    session = get_session(current_app)
+    
+    try:
+        stmt = (
+            select(pqr.c.question_id, ep.c.paper_name, pqr.c.question_sort)
+            .join(ep, ep.c.paper_id == pqr.c.paper_id)
+            .where(pqr.c.question_id.in_(ids))
+        )
+        rows = session.execute(stmt).mappings().all()
+        return jsonify({"dependencies": [dict(r) for r in rows]})
+    except SQLAlchemyError as err:
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 
 

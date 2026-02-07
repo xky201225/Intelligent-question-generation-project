@@ -6,6 +6,9 @@ import re
 import threading
 import time
 import uuid
+import io
+import pdfplumber
+from docx import Document
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -967,6 +970,187 @@ def verify_question():
     except SQLAlchemyError as err:
         get_session(current_app).rollback()
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
+
+
+def _run_parsing(app, job_id: str, text: str, subject_id: int | None, chapter_id: int | None, type_id: int | None, difficulty_id: int | None, create_user: str):
+    with app.app_context():
+        _job_update(job_id, {"status": "running", "started_at": datetime.now().isoformat(timespec="seconds")})
+        _job_event(job_id, "job_start", "开始AI解析")
+        
+        # qb = _table("question_bank")
+        # session = get_session(current_app)
+        # inserted = 0
+        # created_ids: list[int] = []
+        parsed_items: list[dict] = []
+        
+        try:
+            system_prompt = "你是出题助理。你必须严格输出 JSON 数组，不要输出任何多余文本。"
+            user_prompt = (
+                "请解析以下题目文本，提取题目信息。\n"
+                "要求：\n"
+                "1) 输出严格 JSON 数组，每个元素包含：question_content, question_answer, question_analysis, question_score\n"
+                "2) 如果文本中缺少答案或解析，请你根据题目内容自动生成正确的答案和详细解析\n"
+                "3) question_content 应包含题干和选项（如果是选择题）\n"
+                "4) 自动判断题目分值，如果无法判断则默认为 2\n"
+                "\n待解析文本：\n"
+                f"{text[:50000]}"
+            )
+            
+            client = get_deepseek_client()
+            
+            _job_event(job_id, "ai_start", "正在请求AI进行解析...")
+            
+            raw_chunks: list[str] = []
+            buf = ""
+            last_flush = time.time()
+            
+            try:
+                for chunk in client.chat_stream(system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.2):
+                    raw_chunks.append(chunk)
+                    buf += chunk
+                    now_ts = time.time()
+                    if len(buf) >= 200 or "\n" in buf or (now_ts - last_flush) >= 0.8:
+                        _job_event(job_id, "ai_delta", data={"text": buf})
+                        buf = ""
+                        last_flush = now_ts
+                if buf:
+                    _job_event(job_id, "ai_delta", data={"text": buf})
+                raw_text = "".join(raw_chunks)
+            except Exception as err:
+                 _job_event(job_id, "ai_error", f"流式请求失败: {err}")
+                 raw_text = client.chat(system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.2)
+                 _job_event(job_id, "ai_delta", data={"text": raw_text})
+            
+            _job_event(job_id, "ai_end", "AI响应完成，开始提取数据")
+            
+            items = []
+            try:
+                items = _extract_json_list(raw_text)
+            except Exception as err:
+                _job_event(job_id, "job_error", f"解析JSON失败: {err}")
+                raise
+            
+            _job_event(job_id, "parse_ok", f"成功解析出 {len(items)} 道题目")
+            
+            now = datetime.now()
+            for it in items:
+                if not isinstance(it, dict): continue
+                
+                content = _pick_first(it, ["question_content", "content", "stem", "question", "题干"])
+                if not content: continue
+                
+                answer = _pick_first(it, ["question_answer", "answer", "答案"])
+                analysis = _pick_first(it, ["question_analysis", "analysis", "解析"])
+                score_raw = _pick_first(it, ["question_score", "score", "分值"])
+                score_val = None
+                if score_raw:
+                    try:
+                        score_val = float(score_raw)
+                    except:
+                        score_val = 2.0
+                else:
+                    score_val = 2.0
+
+                data = {
+                    "subject_id": subject_id,
+                    "chapter_id": chapter_id,
+                    "type_id": type_id,
+                    "difficulty_id": difficulty_id,
+                    "question_content": content,
+                    "question_answer": answer,
+                    "question_analysis": analysis,
+                    "question_score": score_val,
+                    "is_ai_generated": 1,
+                    "source_question_ids": None,
+                    "review_status": 0,
+                    # "reviewer": None,
+                    # "review_time": None,
+                    "create_user": create_user,
+                    # "create_time": now,
+                    # "update_time": now,
+                }
+                parsed_items.append(data)
+                # res = session.execute(insert(qb).values(**data))
+                # if res.inserted_primary_key:
+                #     created_ids.append(res.inserted_primary_key[0])
+                # inserted += 1
+            
+            # session.commit()
+            _job_update(
+                job_id,
+                {
+                    "status": "done",
+                    "inserted": 0,
+                    "items": parsed_items,
+                    "question_ids": [],
+                    "finished_at": datetime.now().isoformat(timespec="seconds"),
+                },
+            )
+            _job_event(job_id, "job_done", f"解析完成：共{len(parsed_items)}题", {"count": len(parsed_items)})
+            
+        except Exception as err:
+            # session.rollback()
+            _job_update(job_id, {"status": "error", "error": str(err)})
+            _job_event(job_id, "job_error", str(err))
+
+
+@ai_bp.post("/parse-word")
+def parse_word():
+    file = request.files.get("file")
+    if file is None:
+        return jsonify({"error": {"message": "缺少上传文件 file", "type": "BadRequest"}}), 400
+        
+    filename = file.filename or ""
+    lower_name = filename.lower()
+    
+    subject_id = request.form.get("subject_id", type=int)
+    chapter_id = request.form.get("chapter_id", type=int)
+    type_id = request.form.get("type_id", type=int)
+    difficulty_id = request.form.get("difficulty_id", type=int)
+    create_user = request.form.get("create_user") or "ai_import"
+
+    # 移除必填校验，因为可以在解析后手动设置
+    # if not subject_id or not chapter_id or not type_id or not difficulty_id:
+    #     return jsonify({"error": {"message": "subject_id, chapter_id, type_id, difficulty_id 必填", "type": "BadRequest"}}), 400
+    
+    text = ""
+    try:
+        file_bytes = file.read()
+        if lower_name.endswith(".pdf"):
+            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                pages_text = []
+                for page in pdf.pages:
+                    pt = page.extract_text()
+                    if pt:
+                        pages_text.append(pt)
+                text = "\n".join(pages_text)
+        else:
+            # 默认尝试 Word
+            doc = Document(io.BytesIO(file_bytes))
+            text = "\n".join([p.text.strip() for p in doc.paragraphs if p.text.strip()])
+    except Exception as e:
+        return jsonify({"error": {"message": f"读取文件失败: {str(e)}", "type": "BadRequest"}}), 400
+        
+    if not text:
+        return jsonify({"error": {"message": "文件内容为空或无法提取文本", "type": "BadRequest"}}), 400
+        
+    job_id = uuid.uuid4().hex
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "inserted": 0,
+            "items": [], # 存储解析结果
+            "question_ids": [],
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "seq": 0,
+            "events": [],
+        }
+        
+    app = current_app._get_current_object()
+    _executor.submit(_run_parsing, app, job_id, text, subject_id, chapter_id, type_id, difficulty_id, create_user)
+    
+    return jsonify({"ok": True, "job_id": job_id, "queued": True})
 
 
 @ai_bp.post("/verify/batch")

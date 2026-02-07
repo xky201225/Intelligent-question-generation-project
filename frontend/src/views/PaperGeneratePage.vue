@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Plus, Refresh, Delete, Check } from '@element-plus/icons-vue'
+import { Search, Plus, Refresh, Delete, Check, FullScreen } from '@element-plus/icons-vue'
 import { http } from '../api/http'
 
 const loading = ref(false)
@@ -45,6 +45,8 @@ const paper = reactive({
 
 const picked = ref([])
 const dragIndex = ref(-1)
+const showPaperDrawer = ref(false)
+const isDrawerFullscreen = ref(false)
 
 const authorOptions = computed(() => {
   const set = new Set()
@@ -159,6 +161,7 @@ function addSelected() {
     })
   }
   renumber()
+  showPaperDrawer.value = true
 }
 
 function removePicked(index) {
@@ -245,15 +248,14 @@ onMounted(async () => {
   <div class="page">
     <el-alert v-if="error" :title="error" type="error" show-icon />
 
-    <el-row :gutter="12">
-      <el-col :span="15">
-        <el-card>
+    <el-card>
           <template #header>
             <div class="header">
               <div>题目筛选</div>
               <div class="actions">
                 <el-button :loading="loading" @click="search" :icon="Search">查询</el-button>
                 <el-button type="primary" :loading="loading" @click="addSelected" :icon="Plus">加入试卷</el-button>
+                <el-button @click="showPaperDrawer = true">已选 ({{ picked.length }})</el-button>
               </div>
             </div>
           </template>
@@ -373,21 +375,23 @@ onMounted(async () => {
               @current-change="search"
             />
           </div>
-        </el-card>
-      </el-col>
+      </el-card>
 
-      <el-col :span="9">
-        <el-card>
-          <template #header>
-            <div class="header">
-              <div>已选题目（{{ picked.length }}）</div>
-              <div class="actions">
-                <el-button @click="renumber" :icon="Refresh">重新编号</el-button>
-                <el-button type="danger" @click="clearPicked" :icon="Delete">清空</el-button>
-                <el-button type="primary" :loading="loading" @click="savePaper" :icon="Check">保存试卷</el-button>
-              </div>
-            </div>
-          </template>
+    <el-drawer v-model="showPaperDrawer" :size="isDrawerFullscreen ? '100%' : '500px'" direction="rtl">
+      <template #header>
+        <div class="drawer-header-custom">
+          <span class="drawer-title">已选题目与配置</span>
+          <el-button link @click="isDrawerFullscreen = !isDrawerFullscreen" :icon="FullScreen" title="切换全屏" class="fullscreen-btn" />
+        </div>
+      </template>
+      <div class="drawer-inner">
+        <div class="drawer-top-actions">
+           <h3>已选题目（{{ picked.length }}）</h3>
+           <div class="actions">
+              <el-button @click="renumber" :icon="Refresh" size="small">重新编号</el-button>
+              <el-button type="danger" @click="clearPicked" :icon="Delete" size="small">清空</el-button>
+           </div>
+        </div>
 
           <el-form label-width="80px" class="paper-form">
             <el-form-item label="试卷名">
@@ -419,29 +423,58 @@ onMounted(async () => {
               @dragover.prevent
               @drop="onDrop(index)"
             >
-              <div class="drag">≡</div>
-              <div class="sort">
-                <el-input-number v-model="it.question_sort" :min="1" :max="9999" size="small" />
+              <div class="row-left">
+                <div class="drag-handle">≡</div>
               </div>
-              <div class="meta">
-                <div class="meta-top">
-                  <span class="qid">#{{ it.question_id }}</span>
+              <div class="row-main">
+                <div class="info-header">
                   <span class="tag">{{ typeName(it.type_id) }}</span>
                   <span class="tag">{{ difficultyName(it.difficulty_id) }}</span>
+                  <span class="qid">#{{ it.question_id }}</span>
                 </div>
-                <div class="meta-content">{{ it.question_content }}</div>
+                <div class="info-body">
+                  <div class="q-field">
+                    <span class="label">【题干】</span>
+                    <span class="text">{{ it.question_content }}</span>
+                  </div>
+                  <div class="q-field" v-if="it.question_answer">
+                    <span class="label">【答案】</span>
+                    <span class="text">{{ it.question_answer }}</span>
+                  </div>
+                  <div class="q-field" v-if="it.question_analysis">
+                    <span class="label">【解析】</span>
+                    <span class="text">{{ it.question_analysis }}</span>
+                  </div>
+                </div>
               </div>
-              <div class="score">
-                <el-input-number v-model="it.question_score" :min="0" :step="0.5" size="small" />
-              </div>
-              <div class="remove">
-                <el-button link type="danger" @click="removePicked(index)" :icon="Delete">移除</el-button>
+              <div class="row-right">
+                <div class="control-item">
+                  <span class="control-label">序号</span>
+                  <el-input-number v-model="it.question_sort" :min="1" :max="9999" size="small" style="width: 100%" />
+                </div>
+                <div class="control-item">
+                  <span class="control-label">分值</span>
+                  <el-input-number v-model="it.question_score" :min="0" :step="0.5" size="small" style="width: 100%" />
+                </div>
+                <div class="control-item">
+                  <el-button link type="danger" @click="removePicked(index)" :icon="Delete">移除</el-button>
+                </div>
               </div>
             </div>
           </div>
-        </el-card>
-      </el-col>
-    </el-row>
+      </div>
+      <template #footer>
+        <div class="drawer-footer">
+           <div class="footer-left">
+             <!-- Fullscreen button moved to header -->
+           </div>
+           <div class="footer-right">
+             <el-button @click="showPaperDrawer = false">继续选择</el-button>
+             <el-button type="primary" :loading="loading" @click="savePaper" :icon="Check">保存试卷</el-button>
+           </div>
+        </div>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -507,8 +540,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 560px;
-  overflow-y: auto;
+  /* max-height removed to allow full height display */
   border-top: 1px solid var(--el-border-color);
   padding-top: 10px;
 }
@@ -519,61 +551,152 @@ onMounted(async () => {
 }
 
 .picked-row {
-  display: grid;
-  grid-template-columns: 16px 92px 1fr 110px 48px;
-  align-items: start;
-  gap: 8px;
-  padding: 10px;
+  display: flex;
+  gap: 10px;
+  padding: 12px;
   border: 1px solid var(--el-border-color);
   border-radius: 6px;
   background-color: var(--el-bg-color);
+  align-items: stretch;
 }
 
-.drag {
-  user-select: none;
+.row-left {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--el-border-color-lighter);
+  margin-right: 4px;
+}
+
+.drag-handle {
   cursor: grab;
   color: var(--el-text-color-secondary);
-  line-height: 28px;
+  font-size: 18px;
+  user-select: none;
 }
 
-.sort {
-  padding-top: 2px;
-}
-
-.meta-top {
+.row-main {
+  flex: 1;
   display: flex;
+  flex-direction: column;
   gap: 8px;
+  min-width: 0;
+}
+
+.info-header {
+  display: flex;
   align-items: center;
-  margin-bottom: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .qid {
   font-weight: 600;
+  color: var(--el-text-color-regular);
 }
 
 .tag {
-  color: var(--el-text-color-secondary);
   font-size: 12px;
+  padding: 2px 6px;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+  color: var(--el-text-color-secondary);
 }
 
-.meta-content {
-  white-space: pre-wrap;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  color: var(--el-text-color-regular);
-  font-size: 13px;
-}
-
-.score {
-  padding-top: 2px;
-}
-
-.remove {
-  padding-top: 2px;
+.info-body {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.q-field {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--el-text-color-regular);
+  word-break: break-all;
+}
+
+.label {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  margin-right: 4px;
+}
+
+.text {
+  white-space: pre-wrap;
+}
+
+.row-right {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--el-border-color-lighter);
+  padding-left: 10px;
+  justify-content: center;
+}
+
+.control-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-end;
+}
+
+.control-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.drawer-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.drawer-top-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.drawer-top-actions h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.drawer-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.footer-left {
+  display: flex;
+  align-items: center;
+}
+
+.footer-right {
+  display: flex;
+  gap: 10px;
+}
+
+.drawer-header-custom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.drawer-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
 }
 </style>

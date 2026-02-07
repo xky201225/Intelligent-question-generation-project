@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 
 from flask import Blueprint, current_app, jsonify, request, send_file
-from sqlalchemy import and_, delete, func, insert, select, update
+from sqlalchemy import and_, delete, func, insert, select, update, desc
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db import get_db, get_session
@@ -331,6 +331,8 @@ def list_papers():
         paper.c.total_score,
         paper.c.creator,
         paper.c.review_status,
+        paper.c.reviewer,
+        paper.c.review_time,
         paper.c.create_time,
         paper.c.update_time,
     )
@@ -385,6 +387,26 @@ def delete_paper(paper_id: int):
     try:
         session.execute(delete(rel).where(rel.c.paper_id == paper_id))
         session.execute(delete(paper).where(paper.c.paper_id == paper_id))
+        session.commit()
+        return jsonify({"ok": True})
+    except SQLAlchemyError as err:
+        session.rollback()
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
+
+
+@papers_bp.post("/batch-delete")
+def batch_delete_papers():
+    payload = request.get_json(silent=True) or {}
+    ids = payload.get("ids")
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"error": {"message": "ids 必须是非空数组", "type": "BadRequest"}}), 400
+
+    paper = _table("exam_paper")
+    rel = _table("paper_question_relation")
+    session = get_session(current_app)
+    try:
+        session.execute(delete(rel).where(rel.c.paper_id.in_(ids)))
+        session.execute(delete(paper).where(paper.c.paper_id.in_(ids)))
         session.commit()
         return jsonify({"ok": True})
     except SQLAlchemyError as err:
@@ -448,39 +470,37 @@ def _export_base_dir(paper_id: int) -> str:
     return base
 
 
-def _versions_path(paper_id: int) -> str:
-    return os.path.join(_export_base_dir(paper_id), "versions.json")
-
-
-def _load_versions(paper_id: int) -> list[dict]:
-    vp = _versions_path(paper_id)
-    if not os.path.exists(vp):
-        return []
-    with open(vp, "r", encoding="utf-8") as f:
-        return json.loads(f.read() or "[]")
-
-
-def _save_versions(paper_id: int, versions: list[dict]) -> None:
-    vp = _versions_path(paper_id)
-    with open(vp, "w", encoding="utf-8") as f:
-        f.write(json.dumps(versions, ensure_ascii=False, indent=2))
-
-
 @papers_bp.get("/<int:paper_id>/exports")
 def list_exports(paper_id: int):
-    return jsonify({"items": _load_versions(paper_id)})
+    history = _table("paper_export_history")
+    session = get_session(current_app)
+    try:
+        stmt = select(history).where(history.c.paper_id == paper_id).order_by(desc(history.c.created_at))
+        rows = session.execute(stmt).mappings().all()
+        return jsonify({"items": [dict(r) for r in rows]})
+    except SQLAlchemyError as err:
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 
 
 @papers_bp.get("/<int:paper_id>/exports/<string:version_id>/download")
 def download_export(paper_id: int, version_id: str):
-    versions = _load_versions(paper_id)
-    v = next((x for x in versions if x.get("version_id") == version_id), None)
-    if not v:
-        return jsonify({"error": {"message": "版本不存在", "type": "NotFound"}}), 404
-    path = os.path.join(_export_base_dir(paper_id), v["filename"])
-    if not os.path.exists(path):
-        return jsonify({"error": {"message": "文件不存在", "type": "NotFound"}}), 404
-    return send_file(path, as_attachment=True, download_name=v.get("download_name") or v["filename"])
+    history = _table("paper_export_history")
+    session = get_session(current_app)
+    
+    try:
+        stmt = select(history).where(and_(history.c.paper_id == paper_id, history.c.version_id == version_id))
+        row = session.execute(stmt).mappings().first()
+        
+        if not row:
+            return jsonify({"error": {"message": "版本不存在", "type": "NotFound"}}), 404
+            
+        path = os.path.join(_export_base_dir(paper_id), row["filename"])
+        if not os.path.exists(path):
+            return jsonify({"error": {"message": "文件不存在", "type": "NotFound"}}), 404
+            
+        return send_file(path, as_attachment=True, download_name=row["download_name"] or row["filename"])
+    except SQLAlchemyError as err:
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 
 
 def _render_word(paper_row: dict, questions: list[dict], header: str | None, footer: str | None, include_answer: bool) -> Document:
@@ -492,9 +512,7 @@ def _render_word(paper_row: dict, questions: list[dict], header: str | None, foo
         doc.add_paragraph(str(header))
 
     for q in questions:
-        doc.add_paragraph(f"{q['question_sort']}. {q.get('question_content') or ''}")
-        if q.get("question_score") is not None:
-            doc.add_paragraph(f"（{q['question_score']}分）")
+        doc.add_paragraph(f"{q['question_sort']}. {f'（{q.get('question_score')}分）' if q.get('question_score') is not None else ''} {q.get('question_content') or ''}")
         if include_answer:
             if q.get("question_answer"):
                 doc.add_paragraph(f"答案：{q.get('question_answer')}")
@@ -546,18 +564,6 @@ def export_word(paper_id: int):
         path = os.path.join(_export_base_dir(paper_id), filename)
         doc.save(path)
 
-        versions = _load_versions(paper_id)
-        versions.insert(
-            0,
-            {
-                "version_id": version_id,
-                "type": "word",
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-                "filename": filename,
-                "download_name": f"{p.get('paper_name') or 'paper'}_{ts}.docx",
-            },
-        )
-        _save_versions(paper_id, versions)
         return jsonify({"version_id": version_id, "filename": filename})
     except SQLAlchemyError as err:
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
@@ -582,19 +588,6 @@ def export_pdf(paper_id: int):
 
     try:
         docx2pdf_convert(word_path, pdf_path)
-        versions = _load_versions(paper_id)
-        versions.insert(
-            0,
-            {
-                "version_id": pdf_version_id,
-                "type": "pdf",
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-                "filename": pdf_filename,
-                "download_name": os.path.basename(pdf_filename),
-                "source_version_id": version_id,
-            },
-        )
-        _save_versions(paper_id, versions)
         return jsonify({"version_id": pdf_version_id, "filename": pdf_filename})
-    except Exception as err:
-        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
+    except Exception as e:
+        return jsonify({"error": {"message": f"PDF转换失败: {str(e)}", "type": "ConversionError"}}), 500

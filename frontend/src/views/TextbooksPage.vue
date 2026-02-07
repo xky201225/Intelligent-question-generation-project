@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus, Operation, Edit, Delete, Upload, MagicStick, Check, Close } from '@element-plus/icons-vue'
+import { Refresh, Plus, Operation, Edit, Delete, Upload, MagicStick, Check, Close, Download } from '@element-plus/icons-vue'
 import { http } from '../api/http'
 
 const loading = ref(false)
@@ -114,6 +114,15 @@ async function importChaptersExcel(options) {
     ElMessage.error(e?.message || '导入失败')
     options.onError && options.onError(e)
   }
+}
+
+function downloadTemplate() {
+  const link = document.createElement('a')
+  link.href = '/chapter_import_template.xlsx'
+  link.download = '章节导入模板.xlsx'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
 }
 
 async function loadSubjects() {
@@ -358,6 +367,7 @@ onMounted(async () => {
     <!-- 章节树 Drawer -->
     <el-drawer v-model="showChapterTreeDrawer" :title="selectedTextbook ? `[${selectedTextbook.textbook_name}] 章节管理` : '章节管理'" size="50%">
       <div class="drawer-header-actions">
+        <el-button size="small" type="success" @click="downloadTemplate" :icon="Download">下载模板</el-button>
         <el-upload :show-file-list="false" :http-request="importChaptersExcel" accept=".xlsx,.xls">
           <el-button size="small" :icon="Upload">Excel导入章节</el-button>
         </el-upload>

@@ -17,7 +17,7 @@ class Config:
 
     SQLALCHEMY_ECHO = os.getenv("SQLALCHEMY_ECHO", "0") == "1"
 
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "your-deepseek-api-key")
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-3123383874c042e8a16e8d3e93c80810")
     DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 

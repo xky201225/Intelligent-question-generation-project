@@ -35,13 +35,13 @@ onMounted(loadAll)
 <template>
   <div class="page">
     <div class="header">
-      <div class="title">基础字典</div>
+      <div class="title">基础信息</div>
       <el-button :loading="loading" @click="loadAll" :icon="Refresh">刷新</el-button>
     </div>
 
     <el-alert v-if="error" :title="error" type="error" show-icon />
 
-    <el-card class="card" header="科目 subject_dict">
+    <el-card class="card" header="科目">
       <el-table :data="subjects" :loading="loading" height="260">
         <el-table-column prop="subject_id" label="ID" width="90" />
         <el-table-column prop="subject_name" label="名称" />
@@ -52,7 +52,7 @@ onMounted(loadAll)
     </el-card>
 
     <div class="grid">
-      <el-card class="card" header="题型 question_type_dict">
+      <el-card class="card" header="题型">
         <el-table :data="questionTypes" :loading="loading" height="260">
           <el-table-column prop="type_id" label="ID" width="90" />
           <el-table-column prop="type_name" label="名称" />
@@ -60,7 +60,7 @@ onMounted(loadAll)
         </el-table>
       </el-card>
 
-      <el-card class="card" header="难度 question_difficulty_dict">
+      <el-card class="card" header="难度">
         <el-table :data="difficulties" :loading="loading" height="260">
           <el-table-column prop="difficulty_id" label="ID" width="90" />
           <el-table-column prop="difficulty_name" label="名称" />

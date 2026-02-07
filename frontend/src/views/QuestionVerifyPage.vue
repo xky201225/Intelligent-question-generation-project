@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Delete, Edit, Refresh, Close } from '@element-plus/icons-vue'
 import { http } from '../api/http'
+import { getUser } from '../auth'
 
 const loading = ref(false)
 const subjects = ref([])
@@ -57,9 +58,10 @@ async function loadPending() {
 async function approveAll() {
   try {
     await ElMessageBox.confirm('确定要通过所有待审核题目吗？', '提示', { type: 'warning' })
+    const user = getUser()
     const resp = await http.post('/ai/verify/batch', {
       action: 'approve_all_pending',
-      reviewer: 'reviewer',
+      reviewer: user ? user.name : 'reviewer',
     })
     ElMessage.success(`已批量通过 ${resp.data.count} 道题目`)
     await loadPending()
@@ -85,10 +87,11 @@ async function remove(row) {
 
 async function approve(row) {
   try {
+    const user = getUser()
     await http.post('/ai/verify', {
       question_id: row.question_id,
       action: 'approve',
-      reviewer: 'reviewer',
+      reviewer: user ? user.name : 'reviewer',
     })
     ElMessage.success('已通过')
     await loadPending()
@@ -99,10 +102,11 @@ async function approve(row) {
 
 async function reject(row) {
   try {
+    const user = getUser()
     await http.post('/ai/verify', {
       question_id: row.question_id,
       action: 'reject',
-      reviewer: 'reviewer',
+      reviewer: user ? user.name : 'reviewer',
     })
     ElMessage.success('已拒绝')
     await loadPending()
@@ -128,10 +132,11 @@ function openEdit(row) {
 
 async function updateAndApprove() {
   try {
+    const user = getUser()
     await http.post('/ai/verify', {
       question_id: editDialog.form.question_id,
       action: 'update_and_approve',
-      reviewer: 'reviewer',
+      reviewer: user ? user.name : 'reviewer',
       fields: { ...editDialog.form },
     })
     editDialog.visible = false

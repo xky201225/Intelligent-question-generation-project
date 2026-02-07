@@ -1,24 +1,60 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Delete, Download, Check } from '@element-plus/icons-vue'
+import { Refresh, Delete, Download, Check, FullScreen, View, Rank } from '@element-plus/icons-vue'
 import { http } from '../api/http'
+import { getUser } from '../auth'
+import ExportPreview from '../components/ExportPreview.vue'
 
 const loading = ref(false)
 const error = ref('')
+const showPaperDrawer = ref(false)
+const isDrawerFullscreen = ref(false)
+const showPreview = ref(false)
 
 const papers = ref([])
+const selectedPaperIds = ref([])
 const selectedPaperId = ref(null)
 const paper = ref(null)
 const questions = ref([])
 const exportsList = ref([])
+const draggingIndex = ref(-1)
 
 const paperForm = reactive({
   paper_name: '',
   paper_desc: '',
   exam_duration: null,
   is_closed_book: null,
+  review_status: 0,
 })
+
+async function submitReview(status) {
+    if (!selectedPaperId.value) return
+    try {
+        const user = getUser()
+        const reviewer = user ? user.name : 'admin' // Fallback if no user
+        
+        const now = new Date()
+        const review_time = now.getFullYear() + '-' +
+            String(now.getMonth() + 1).padStart(2, '0') + '-' +
+            String(now.getDate()).padStart(2, '0') + ' ' +
+            String(now.getHours()).padStart(2, '0') + ':' +
+            String(now.getMinutes()).padStart(2, '0') + ':' +
+            String(now.getSeconds()).padStart(2, '0')
+        
+        await http.put(`/papers/${selectedPaperId.value}`, {
+            ...paperForm, // Keep other fields
+            review_status: status,
+            reviewer: reviewer,
+            review_time: review_time
+        })
+        ElMessage.success(status === 1 ? '已通过审核' : '已驳回')
+        await loadPaperDetail(selectedPaperId.value)
+        await loadPapers()
+    } catch (e) {
+        ElMessage.error(e?.message || '审核操作失败')
+    }
+}
 
 const downloadBase = computed(() => http.defaults.baseURL || 'http://localhost:5000/api')
 
@@ -42,6 +78,9 @@ async function loadPaperDetail(paperId) {
     exportsList.value = []
     return
   }
+  // Prevent double-fetching or fetching while main list is loading
+  if (loading.value) return
+
   loading.value = true
   error.value = ''
   try {
@@ -50,9 +89,11 @@ async function loadPaperDetail(paperId) {
     questions.value = resp.data.questions || []
     paperForm.paper_name = paper.value.paper_name || ''
     paperForm.paper_desc = paper.value.paper_desc || ''
-    paperForm.exam_duration = paper.value.exam_duration
-    paperForm.is_closed_book = paper.value.is_closed_book
-    await loadExports(paperId)
+  paperForm.exam_duration = paper.value.exam_duration
+  paperForm.is_closed_book = paper.value.is_closed_book
+  paperForm.review_status = paper.value.review_status || 0 // Default to 0 (Pending)
+  await loadExports(paperId)
+  showPaperDrawer.value = true
   } catch (e) {
     error.value = e?.message || '加载失败'
   } finally {
@@ -63,7 +104,16 @@ async function loadPaperDetail(paperId) {
 async function savePaper() {
   if (!selectedPaperId.value) return
   try {
-    await http.put(`/papers/${selectedPaperId.value}`, { ...paperForm })
+    const payload = { ...paperForm }
+    // If status changed to Approved/Rejected, set reviewer and time
+    // But we should probably only do this if the user explicitly clicks a "Review" button
+    // For now, let's keep basic save separate from review, OR update everything if status changed.
+    // To keep it simple, we include review_status in paperForm, so it gets updated.
+    
+    // We'll handle reviewer info in a separate function 'submitReview' or here if we bind review_status.
+    // Let's assume paperForm.review_status is bound to the review controls.
+    
+    await http.put(`/papers/${selectedPaperId.value}`, payload)
     ElMessage.success('已保存')
     await loadPaperDetail(selectedPaperId.value)
     await loadPapers()
@@ -147,9 +197,115 @@ async function loadExports(paperId) {
   exportsList.value = resp.data.items || []
 }
 
-function openDownload(paperId, versionId) {
-  const url = `${downloadBase.value}/papers/${paperId}/exports/${versionId}/download`
-  window.open(url, '_blank')
+async function openDownload(paperId, versionId, filename = null) {
+  try {
+    const res = await http.get(`/papers/${paperId}/exports/${versionId}/download`, {
+      responseType: 'blob',
+    })
+    
+    let downloadName = filename
+    if (!downloadName) {
+      const disposition = res.headers['content-disposition']
+      if (disposition) {
+        // Simple fallback extraction
+        if (disposition.includes('filename=')) {
+          downloadName = disposition.split('filename=')[1].split(';')[0].replace(/['"]/g, '')
+        }
+        // Try UTF-8 specific
+        if (disposition.includes("filename*=")) {
+           const match = disposition.match(/filename\*=UTF-8''(.+)/)
+           if (match && match[1]) {
+             try {
+               downloadName = decodeURIComponent(match[1])
+             } catch (e) {
+               console.warn('Decode filename failed', e)
+             }
+           }
+        }
+      }
+    }
+    if (!downloadName) {
+      downloadName = `paper_export_${paperId}.docx`
+    }
+
+    const blob = new Blob([res.data], { type: res.headers['content-type'] })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.style.display = 'none'
+    link.href = url
+    link.setAttribute('download', downloadName)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+  } catch (e) {
+    ElMessage.error(e?.message || '下载失败')
+  }
+}
+
+function onDragStart(index) {
+  draggingIndex.value = index
+}
+
+function onDragOver(e) {
+  e.preventDefault()
+}
+
+function onDrop(index) {
+  if (draggingIndex.value === -1 || draggingIndex.value === index) return
+  
+  const movedItem = questions.value[draggingIndex.value]
+  questions.value.splice(draggingIndex.value, 1)
+  questions.value.splice(index, 0, movedItem)
+  
+  // Recalculate sort order immediately
+  questions.value.forEach((q, idx) => {
+    q.question_sort = idx + 1
+  })
+  
+  draggingIndex.value = -1
+}
+
+function handleRowClick(row) {
+  // If clicking the currently selected row, manually trigger reload
+  // because current-change event won't fire for the same row.
+  // We only check if NOT loading, to allow refresh.
+  if (!loading.value && selectedPaperId.value === row.paper_id) {
+    loadPaperDetail(row.paper_id)
+  }
+}
+
+function handleSelectionChange(selection) {
+  selectedPaperIds.value = selection.map(item => item.paper_id)
+}
+
+async function batchDelete() {
+  if (selectedPaperIds.value.length === 0) return
+  
+  try {
+    await ElMessageBox.confirm(`确认批量删除选中的 ${selectedPaperIds.value.length} 份试卷？`, '提示', {
+      type: 'warning',
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger'
+    })
+    
+    await http.post('/papers/batch-delete', { ids: selectedPaperIds.value })
+    
+    // Check if currently viewed paper is deleted
+    if (selectedPaperId.value && selectedPaperIds.value.includes(selectedPaperId.value)) {
+      selectedPaperId.value = null
+      await loadPaperDetail(null)
+    }
+    
+    await loadPapers()
+    selectedPaperIds.value = [] // Clear selection
+    ElMessage.success('批量删除成功')
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(e?.message || '操作失败')
+    }
+  }
 }
 
 onMounted(async () => {
@@ -161,12 +317,14 @@ onMounted(async () => {
   <div class="page">
     <el-alert v-if="error" :title="error" type="error" show-icon />
 
-    <div class="grid">
       <el-card class="card" header="试卷列表">
         <template #header>
           <div class="header">
             <div>试卷列表</div>
-            <el-button :loading="loading" @click="loadPapers" :icon="Refresh">刷新</el-button>
+            <div class="actions">
+              <el-button type="danger" plain @click="batchDelete" :disabled="selectedPaperIds.length === 0" :icon="Delete">批量删除</el-button>
+              <el-button :loading="loading" @click="loadPapers" :icon="Refresh">刷新</el-button>
+            </div>
           </div>
         </template>
         <el-table
@@ -174,17 +332,35 @@ onMounted(async () => {
           :loading="loading"
           highlight-current-row
           height="620"
+          @row-click="handleRowClick"
+          @selection-change="handleSelectionChange"
           @current-change="
             async (row) => {
-              selectedPaperId = row?.paper_id || null
-              await loadPaperDetail(selectedPaperId)
+              if (row) {
+                selectedPaperId = row.paper_id
+                await loadPaperDetail(selectedPaperId)
+              }
             }
           "
         >
+          <el-table-column type="selection" width="55" />
           <el-table-column prop="paper_id" label="ID" width="90" />
           <el-table-column prop="paper_name" label="名称" min-width="200" />
           <el-table-column prop="total_score" label="总分" width="90" />
-          <el-table-column prop="review_status" label="状态" width="90" />
+          <el-table-column prop="review_status" label="状态" width="100">
+             <template #default="{ row }">
+                 <el-tag v-if="row.review_status === 1" type="success">已通过</el-tag>
+                 <el-tag v-else-if="row.review_status === 2" type="danger">未通过</el-tag>
+                 <el-tag v-else type="danger">待审核</el-tag>
+             </template>
+          </el-table-column>
+          <el-table-column prop="reviewer" label="审核人" width="100" />
+          <el-table-column prop="review_time" label="审核时间" width="160">
+             <template #default="{ row }">
+                 <span v-if="row.review_time">{{ new Date(row.review_time).toLocaleString() }}</span>
+                 <span v-else>-</span>
+             </template>
+          </el-table-column>
           <el-table-column fixed="right" label="操作" width="100">
             <template #default="{ row }">
               <el-button link type="danger" @click="removePaper(row)" :icon="Delete">删除</el-button>
@@ -193,13 +369,13 @@ onMounted(async () => {
         </el-table>
       </el-card>
 
-      <el-card class="card" header="试卷编辑与导出">
+      <el-drawer v-model="showPaperDrawer" :size="isDrawerFullscreen ? '100%' : '600px'" direction="rtl">
         <template #header>
-          <div class="header">
-            <div>试卷编辑与导出</div>
-            <div class="actions">
-              <el-button :disabled="!selectedPaperId" @click="exportWord" :icon="Download">Word导出</el-button>
-              <el-button :disabled="!selectedPaperId" @click="exportPdf" :icon="Download">PDF导出</el-button>
+          <div class="drawer-header-custom">
+            <span class="drawer-title">试卷编辑与导出</span>
+            <div class="header-actions">
+              <el-button :disabled="!selectedPaperId || paper?.review_status !== 1" @click="showPreview = true" :icon="View" size="small">导出预览</el-button>
+              <el-button link @click="isDrawerFullscreen = !isDrawerFullscreen" :icon="FullScreen" title="切换全屏" />
             </div>
           </div>
         </template>
@@ -230,46 +406,75 @@ onMounted(async () => {
           </div>
 
           <el-divider />
-
-          <div class="inlineActions">
-            <div class="subTitle">题目顺序与分值</div>
-            <el-button type="primary" @click="saveQuestions" :icon="Check">保存顺序/分值</el-button>
+          
+          <div class="review-section">
+             <div class="subTitle">试卷审核</div>
+             <div class="review-status">
+                 当前状态：
+                 <el-tag v-if="paper?.review_status === 1" type="success">已通过</el-tag>
+                 <el-tag v-else-if="paper?.review_status === 2" type="danger">未通过</el-tag>
+                 <el-tag v-else type="danger">待审核</el-tag>
+             </div>
+             <div class="review-actions">
+                 <el-button type="success" @click="submitReview(1)" :disabled="paper?.review_status === 1">通过审核</el-button>
+             </div>
+             <div v-if="paper?.reviewer" class="review-info">
+                 审核人：{{ paper.reviewer }} &nbsp;&nbsp; 审核时间：{{ new Date(paper.review_time).toLocaleString() }}
+             </div>
           </div>
-          <el-table :data="questions" height="360">
-            <el-table-column prop="question_sort" label="序号" width="90">
-              <template #default="{ row }">
-                <el-input-number v-model="row.question_sort" :min="1" style="width: 100%" />
-              </template>
-            </el-table-column>
-            <el-table-column prop="question_id" label="题目ID" width="110" />
-            <el-table-column prop="question_score" label="分值" width="120">
-              <template #default="{ row }">
-                <el-input-number v-model="row.question_score" :min="0" :step="0.5" style="width: 100%" />
-              </template>
-            </el-table-column>
-            <el-table-column label="题干" min-width="320">
-              <template #default="{ row }">
-                <div class="content">{{ row.question_content }}</div>
-              </template>
-            </el-table-column>
-          </el-table>
 
           <el-divider />
 
-          <div class="subTitle">导出历史</div>
-          <el-table :data="exportsList" height="220">
-            <el-table-column prop="created_at" label="时间" width="180" />
-            <el-table-column prop="type" label="类型" width="90" />
-            <el-table-column prop="filename" label="文件" min-width="220" />
-            <el-table-column fixed="right" label="操作" width="120">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="openDownload(selectedPaperId, row.version_id)" :icon="Download">下载</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+          <div class="inlineActions">
+            <div class="subTitle">
+              题目顺序与分值
+              <span class="drag-hint">
+                <el-icon><Rank /></el-icon>
+                可拖动调整顺序
+              </span>
+            </div>
+            <el-button type="primary" @click="saveQuestions" :icon="Check">保存顺序/分值</el-button>
+          </div>
+          <div class="question-list">
+            <div 
+              v-for="(q, index) in questions" 
+              :key="q.question_id" 
+              class="question-card"
+              draggable="true"
+              @dragstart="onDragStart(index)"
+              @dragover="onDragOver"
+              @drop="onDrop(index)"
+              :class="{ 'is-dragging': draggingIndex === index }"
+            >
+              <div class="q-main">
+                <div class="q-content">
+                  <span class="q-id">#{{ q.question_id }}</span>
+                  {{ q.question_content }}
+                </div>
+              </div>
+              <div class="q-controls">
+                <div class="control-item">
+                  <span class="label">序号</span>
+                  <el-input-number v-model="q.question_sort" :min="1" size="small" style="width: 100px" />
+                </div>
+                <div class="control-item">
+                  <span class="label">分值</span>
+                  <el-input-number v-model="q.question_score" :min="0" :step="0.5" size="small" style="width: 100px" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <el-divider />
+
         </div>
-      </el-card>
-    </div>
+      </el-drawer>
+      
+      <ExportPreview 
+        v-model:visible="showPreview" 
+        :paper="paper" 
+        :questions="questions" 
+      />
   </div>
 </template>
 
@@ -280,14 +485,27 @@ onMounted(async () => {
   gap: 12px;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 1.4fr;
-  gap: 16px;
-}
-
 .card {
   width: 100%;
+}
+
+.drawer-header-custom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.drawer-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
 }
 
 .header {
@@ -312,6 +530,71 @@ onMounted(async () => {
   gap: 10px;
 }
 
+.question-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.question-card {
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  padding: 10px;
+  background-color: var(--el-bg-color-overlay);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: grab;
+  transition: all 0.2s ease;
+}
+
+.question-card:active {
+  cursor: grabbing;
+}
+
+.is-dragging {
+  opacity: 0.5;
+  background-color: var(--el-fill-color-light);
+  border: 1px dashed var(--el-color-primary);
+}
+
+.q-main {
+  flex: 1;
+}
+
+.q-content {
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.q-id {
+  font-weight: bold;
+  color: var(--el-color-primary);
+  margin-right: 5px;
+}
+
+.q-controls {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  background-color: var(--el-fill-color-light);
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.control-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
 .paperForm {
   max-width: 760px;
 }
@@ -324,6 +607,18 @@ onMounted(async () => {
 
 .subTitle {
   font-weight: 600;
+  display: flex;
+  align-items: center;
+}
+
+.drag-hint {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--el-text-color-secondary);
+  margin-left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .content {
@@ -333,6 +628,31 @@ onMounted(async () => {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   white-space: pre-wrap;
+}
+.review-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background-color: var(--el-fill-color-light);
+  padding: 15px;
+  border-radius: 6px;
+}
+
+.review-status {
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.review-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.review-info {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>
 
