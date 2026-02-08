@@ -13,6 +13,27 @@ const filter = reactive({ subject_id: null })
 const textbooks = ref([])
 const selectedTextbook = ref(null)
 
+const filterTextbookId = ref(null)
+const selectedPublisher = ref('')
+
+const filteredTextbooks = computed(() => {
+  return textbooks.value.filter(t => {
+    const matchId = !filterTextbookId.value || t.textbook_id === filterTextbookId.value
+    
+    const matchPub = !selectedPublisher.value || t.publisher === selectedPublisher.value
+    
+    return matchId && matchPub
+  })
+})
+
+const publisherOptions = computed(() => {
+  const set = new Set()
+  for (const t of textbooks.value) {
+    if (t.publisher) set.add(t.publisher)
+  }
+  return Array.from(set)
+})
+
 const chapters = ref([])
 const chapterTree = ref([])
 const selectedChapterId = ref(null)
@@ -334,8 +355,14 @@ onMounted(async () => {
   <div class="page">
     <div class="toolbar">
       <div class="left">
-        <el-select v-model="filter.subject_id" clearable placeholder="按科目筛选" style="width: 220px" @change="loadTextbooks">
+        <el-select v-model="filter.subject_id" clearable placeholder="按科目筛选" style="width: 180px" @change="() => { filterTextbookId = null; loadTextbooks() }">
           <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
+        </el-select>
+        <el-select v-model="filterTextbookId" filterable clearable placeholder="请选择教材" style="width: 240px">
+          <el-option v-for="item in textbooks" :key="item.textbook_id" :label="item.textbook_name + (item.author ? '-' + item.author : '')" :value="item.textbook_id" />
+        </el-select>
+        <el-select v-model="selectedPublisher" placeholder="按出版社筛选" clearable style="width: 180px">
+          <el-option v-for="pub in publisherOptions" :key="pub" :label="pub" :value="pub" />
         </el-select>
         <el-button :loading="loading" @click="loadTextbooks" :icon="Refresh">刷新</el-button>
       </div>
@@ -346,14 +373,22 @@ onMounted(async () => {
 
     <el-card class="card" header="教材列表">
       <el-table
-        :data="textbooks"
+        :data="filteredTextbooks"
         :loading="loading"
         highlight-current-row
         height="calc(100vh - 180px)"
       >
         <el-table-column prop="textbook_id" label="ID" width="90" />
-        <el-table-column prop="textbook_name" label="名称" min-width="200" />
+        <el-table-column label="名称" min-width="200">
+          <template #default="{ row }">
+            <span>{{ row.textbook_name }}</span>
+            <span v-if="row.author" style="color: var(--el-text-color-secondary); margin-left: 4px;">
+              ({{ row.author }})
+            </span>
+          </template>
+        </el-table-column>
         <el-table-column prop="author" label="作者" width="140" />
+        <el-table-column prop="publisher" label="出版社" width="140" />
         <el-table-column fixed="right" label="操作" width="300">
           <template #default="{ row }">
             <el-button link type="primary" @click="handleSelectTextbook(row)" :icon="Operation">管理章节</el-button>

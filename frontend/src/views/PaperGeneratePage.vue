@@ -48,13 +48,16 @@ const dragIndex = ref(-1)
 const showPaperDrawer = ref(false)
 const isDrawerFullscreen = ref(false)
 
-const authorOptions = computed(() => {
-  const set = new Set()
-  for (const t of textbooks.value) {
-    if (t.author) set.add(t.author)
-  }
-  return Array.from(set)
+const detailDialog = reactive({
+  visible: false,
+  item: null
 })
+
+function openDetail(row) {
+  detailDialog.item = row
+  detailDialog.visible = true
+}
+
 
 const publisherOptions = computed(() => {
   const set = new Set()
@@ -241,6 +244,8 @@ async function savePaper() {
 
 onMounted(async () => {
   await loadDicts()
+  await loadTextbooks()
+  await search()
 })
 </script>
 
@@ -274,6 +279,7 @@ onMounted(async () => {
                   filters.chapter_ids = []
                   await loadTextbooks()
                   await loadChapters()
+                  await search()
                 }
               "
             >
@@ -289,14 +295,11 @@ onMounted(async () => {
                 async () => {
                   filters.chapter_ids = []
                   await loadChapters()
+                  await search()
                 }
               "
             >
-              <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name" :value="t.textbook_id" />
-            </el-select>
-
-            <el-select v-model="filters.author" clearable placeholder="作者" style="width: 160px" @change="search">
-              <el-option v-for="a in authorOptions" :key="a" :label="a" :value="a" />
+              <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? ' (' + t.author + ')' : '')" :value="t.textbook_id" />
             </el-select>
 
             <el-select v-model="filters.publisher" clearable placeholder="出版社" style="width: 180px" @change="search">
@@ -351,10 +354,9 @@ onMounted(async () => {
                 {{ difficultyName(row.difficulty_id) }}
               </template>
             </el-table-column>
-            <el-table-column prop="question_score" label="分值" width="80" />
             <el-table-column label="题干" min-width="360">
               <template #default="{ row }">
-                <div class="content">{{ row.question_content }}</div>
+                <div class="contentCell" @click="openDetail(row)" title="点击查看详情">{{ row.question_content }}</div>
               </template>
             </el-table-column>
           </el-table>
@@ -376,6 +378,25 @@ onMounted(async () => {
             />
           </div>
       </el-card>
+
+    <el-dialog v-model="detailDialog.visible" title="题目详情" width="600px">
+      <div v-if="detailDialog.item">
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="题干">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_content }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item label="答案">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_answer }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item label="解析">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_analysis }}</div>
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+      <template #footer>
+        <el-button @click="detailDialog.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <el-drawer v-model="showPaperDrawer" :size="isDrawerFullscreen ? '100%' : '500px'" direction="rtl">
       <template #header>
@@ -527,13 +548,17 @@ onMounted(async () => {
   font-size: 13px;
 }
 
-.content {
+.contentCell {
   max-height: 80px;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   white-space: pre-wrap;
+  cursor: pointer;
+}
+.contentCell:hover {
+  color: var(--el-color-primary);
 }
 
 .picked-list {

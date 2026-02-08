@@ -7,6 +7,9 @@ import { getUser } from '../auth'
 
 const loading = ref(false)
 const subjects = ref([])
+const types = ref([])
+const textbooks = ref([])
+const chapterTree = ref([])
 
 const pending = reactive({
   items: [],
@@ -21,6 +24,7 @@ const editDialog = reactive({
   form: {
     question_id: null,
     subject_id: null,
+    textbook_id: null,
     chapter_id: null,
     type_id: null,
     difficulty_id: null,
@@ -32,8 +36,32 @@ const editDialog = reactive({
 })
 
 async function loadDicts() {
-  const resp = await http.get('/dicts/subjects')
-  subjects.value = resp.data.items || []
+  const [s, t] = await Promise.all([
+    http.get('/dicts/subjects'),
+    http.get('/dicts/question-types'),
+  ])
+  subjects.value = s.data.items || []
+  types.value = t.data.items || []
+}
+
+async function loadTextbooks(subjectId) {
+  if (!subjectId) {
+    textbooks.value = []
+    return
+  }
+  const resp = await http.get('/textbooks', {
+    params: { subject_id: subjectId },
+  })
+  textbooks.value = resp.data.items || []
+}
+
+async function loadChapters(textbookId) {
+  if (!textbookId) {
+    chapterTree.value = []
+    return
+  }
+  const resp = await http.get(`/textbooks/${textbookId}/chapters`)
+  chapterTree.value = resp.data.tree || []
 }
 
 async function loadPending() {
@@ -119,6 +147,7 @@ function openEdit(row) {
   editDialog.form = {
     question_id: row.question_id,
     subject_id: row.subject_id,
+    textbook_id: row.textbook_id,
     chapter_id: row.chapter_id,
     type_id: row.type_id,
     difficulty_id: row.difficulty_id,
@@ -127,6 +156,9 @@ function openEdit(row) {
     question_answer: row.question_answer,
     question_analysis: row.question_analysis,
   }
+  // Load dependencies
+  if (row.subject_id) loadTextbooks(row.subject_id)
+  if (row.textbook_id) loadChapters(row.textbook_id)
   editDialog.visible = true
 }
 
@@ -209,6 +241,32 @@ onMounted(async () => {
 
     <el-dialog v-model="editDialog.visible" title="修改并通过" width="760px">
       <el-form label-width="90px">
+        <el-form-item label="教材章节">
+          <div style="display: flex; gap: 8px; width: 100%">
+            <el-select 
+              v-model="editDialog.form.textbook_id" 
+              placeholder="选择教材" 
+              style="flex: 1"
+              @change="() => { editDialog.form.chapter_id = null; loadChapters(editDialog.form.textbook_id) }"
+            >
+              <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name" :value="t.textbook_id" />
+            </el-select>
+            <el-tree-select
+              v-model="editDialog.form.chapter_id"
+              :data="chapterTree"
+              :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
+              node-key="chapter_id"
+              placeholder="选择章节"
+              style="flex: 1"
+              check-strictly
+            />
+          </div>
+        </el-form-item>
+        <el-form-item label="题型">
+          <el-select v-model="editDialog.form.type_id" placeholder="请选择题型" style="width: 100%">
+            <el-option v-for="t in types" :key="t.type_id" :label="t.type_name" :value="t.type_id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="题干">
           <el-input v-model="editDialog.form.question_content" type="textarea" :rows="5" />
         </el-form-item>

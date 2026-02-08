@@ -567,6 +567,16 @@ function startStream(jobId) {
 // AI Review Logic
 const aiReviewChapterTree = ref([])
 
+const detailDialog = reactive({
+  visible: false,
+  item: null
+})
+
+function openDetail(row) {
+  detailDialog.item = row
+  detailDialog.visible = true
+}
+
 async function openReviewDialog(items) {
   aiReviewDialog.items = items.map(it => ({
       ...it,
@@ -682,7 +692,7 @@ onMounted(async () => {
           "
           @current-change="search"
         >
-          <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name" :value="t.textbook_id" />
+          <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? '-' + t.author : '')" :value="t.textbook_id" />
         </el-select>
 
         <el-tree-select
@@ -770,11 +780,9 @@ onMounted(async () => {
             {{ row.difficulty_name || row.difficulty_id }}
           </template>
         </el-table-column>
-        <el-table-column prop="question_score" label="分值" width="90" />
-        <el-table-column prop="review_status" label="状态" width="90" />
         <el-table-column label="题干" min-width="320">
           <template #default="{ row }">
-            <div class="contentCell">{{ row.question_content }}</div>
+            <div class="contentCell" @click="openDetail(row)" title="点击查看详情">{{ row.question_content }}</div>
           </template>
         </el-table-column>
         <el-table-column fixed="right" label="操作" width="180">
@@ -836,7 +844,7 @@ onMounted(async () => {
               }
             "
           >
-            <el-option v-for="t in dialogTextbooks" :key="t.textbook_id" :label="t.textbook_name" :value="t.textbook_id" />
+            <el-option v-for="t in dialogTextbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? '-' + t.author : '')" :value="t.textbook_id" />
           </el-select>
         </el-form-item>
         <el-form-item label="章节">
@@ -912,7 +920,7 @@ onMounted(async () => {
             placeholder="请选择教材"
             style="width: 100%"
           >
-            <el-option v-for="t in aiDialogTextbooks" :key="t.textbook_id" :label="t.textbook_name" :value="t.textbook_id" />
+            <el-option v-for="t in aiDialogTextbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? '-' + t.author : '')" :value="t.textbook_id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -1015,6 +1023,25 @@ onMounted(async () => {
         </template>
     </el-dialog>
 
+    <el-dialog v-model="detailDialog.visible" title="题目详情" width="600px">
+      <div v-if="detailDialog.item">
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="题干">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_content }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item label="答案">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_answer }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item label="解析">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_analysis }}</div>
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+      <template #footer>
+        <el-button @click="detailDialog.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <div v-if="stream.visible" class="streamPanel">
       <div class="streamHeader">
         <div class="streamTitle">
@@ -1096,6 +1123,10 @@ onMounted(async () => {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   white-space: pre-wrap;
+  cursor: pointer;
+}
+.contentCell:hover {
+  color: var(--el-color-primary);
 }
 
 .streamPanel {

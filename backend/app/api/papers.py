@@ -7,11 +7,14 @@ import uuid
 from datetime import datetime
 
 from flask import Blueprint, current_app, jsonify, request, send_file
-from sqlalchemy import and_, delete, func, insert, select, update, desc
+from sqlalchemy import and_, delete, func, insert, select, update, desc, distinct
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db import get_db, get_session
 from docx import Document
+from docx.enum.section import WD_SECTION, WD_ORIENT
+from docx.shared import Pt, Cm, RGBColor, Mm
+from docx.oxml.ns import qn
 
 try:
     from docx2pdf import convert as docx2pdf_convert
@@ -320,10 +323,26 @@ def create_manual_paper():
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 
 
+@papers_bp.get("/reviewers")
+def list_reviewers():
+    paper = _table("exam_paper")
+    try:
+        stmt = select(distinct(paper.c.reviewer)).where(and_(paper.c.reviewer != None, paper.c.reviewer != "")).order_by(paper.c.reviewer)
+        rows = get_session(current_app).execute(stmt).all()
+        return jsonify({"items": [r[0] for r in rows if r[0]]})
+    except SQLAlchemyError as err:
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
+
+
 @papers_bp.get("")
 def list_papers():
     paper = _table("exam_paper")
     subject_id = request.args.get("subject_id", type=int)
+    textbook_id = request.args.get("textbook_id", type=int)
+    reviewer = request.args.get("reviewer")
+    author = request.args.get("author")
+    publisher = request.args.get("publisher")
+
     stmt = select(
         paper.c.paper_id,
         paper.c.paper_name,
@@ -338,6 +357,34 @@ def list_papers():
     )
     if subject_id is not None:
         stmt = stmt.where(paper.c.subject_id == subject_id)
+    
+    if reviewer:
+        stmt = stmt.where(paper.c.reviewer == reviewer)
+        
+    if textbook_id is not None or author or publisher:
+        pqr = _table("paper_question_relation")
+        qb = _table("question_bank")
+        ch = _table("textbook_chapter")
+        tb = _table("textbook")
+        
+        sub = (
+            select(1)
+            .select_from(pqr)
+            .join(qb, qb.c.question_id == pqr.c.question_id)
+            .join(ch, ch.c.chapter_id == qb.c.chapter_id)
+            .join(tb, tb.c.textbook_id == ch.c.textbook_id)
+            .where(pqr.c.paper_id == paper.c.paper_id)
+        )
+        
+        if textbook_id is not None:
+            sub = sub.where(ch.c.textbook_id == textbook_id)
+        if author:
+            sub = sub.where(tb.c.author == author)
+        if publisher:
+            sub = sub.where(tb.c.publisher == publisher)
+            
+        stmt = stmt.where(sub.exists())
+
     stmt = stmt.order_by(paper.c.paper_id.desc()).limit(200)
     try:
         rows = get_session(current_app).execute(stmt).mappings().all()
@@ -503,21 +550,89 @@ def download_export(paper_id: int, version_id: str):
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 
 
-def _render_word(paper_row: dict, questions: list[dict], header: str | None, footer: str | None, include_answer: bool) -> Document:
+def _set_columns(section, cols):
+    sectPr = section._sectPr
+    cols_elm = sectPr.xpath('./w:cols')
+    if cols_elm:
+        cols_elm = cols_elm[0]
+    else:
+        cols_elm = OxmlElement('w:cols')
+        sectPr.append(cols_elm)
+
+    cols_elm.set(qn('w:num'), str(cols))
+    cols_elm.set(qn('w:space'), '425') # ~1.5cm gap
+    cols_elm.set(qn('w:sep'), '1') # Separator line
+
+def _render_word(paper_row: dict, questions: list[dict], header: str | None, footer: str | None, include_answer: bool, paper_size: str = 'A4') -> Document:
     doc = Document()
-    doc.add_paragraph(paper_row.get("paper_name") or "").alignment = 1
-    if paper_row.get("paper_desc"):
-        doc.add_paragraph(str(paper_row["paper_desc"]))
+    section = doc.sections[0]
+    
+    if paper_size == 'A3':
+        section.page_width = Mm(420)
+        section.page_height = Mm(297)
+        section.orientation = WD_ORIENT.LANDSCAPE
+        section.left_margin = Cm(1.5)
+        section.right_margin = Cm(1.5)
+        section.top_margin = Cm(1.5)
+        section.bottom_margin = Cm(1.5)
+        
+        # Add title spanning columns
+        # In Word, to span columns, we usually put title in a separate section (1 col)
+        # then content in another section (2 cols).
+        # doc.sections[0] is already there. Let's use it for Title.
+        
+        p = doc.add_paragraph(paper_row.get("paper_name") or "")
+        p.alignment = 1 # Center
+        run = p.runs[0]
+        run.font.size = Pt(18)
+        run.bold = True
+        
+        if paper_row.get("paper_desc"):
+            doc.add_paragraph(str(paper_row["paper_desc"])).alignment = 1
+            
+        # Meta info
+        meta = f"时长：{paper_row.get('exam_duration')}分钟    {'闭卷' if paper_row.get('is_closed_book') else '开卷'}    总分：{paper_row.get('total_score')}"
+        doc.add_paragraph(meta).alignment = 1
+        
+        doc.add_paragraph() # Spacer
+        
+        # Start new section for columns
+        new_section = doc.add_section(WD_SECTION.CONTINUOUS)
+        _set_columns(new_section, 2)
+        
+    else:
+        # A4 Default
+        section.page_width = Mm(210)
+        section.page_height = Mm(297)
+        section.orientation = WD_ORIENT.PORTRAIT
+        section.left_margin = Cm(2.54)
+        section.right_margin = Cm(2.54)
+        
+        doc.add_paragraph(paper_row.get("paper_name") or "").alignment = 1
+        if paper_row.get("paper_desc"):
+            doc.add_paragraph(str(paper_row["paper_desc"]))
+        
+        meta = f"时长：{paper_row.get('exam_duration')}分钟    {'闭卷' if paper_row.get('is_closed_book') else '开卷'}    总分：{paper_row.get('total_score')}"
+        doc.add_paragraph(meta).alignment = 1
+        doc.add_paragraph()
+
     if header:
         doc.add_paragraph(str(header))
 
     for q in questions:
-        doc.add_paragraph(f"{q['question_sort']}. {f'（{q.get('question_score')}分）' if q.get('question_score') is not None else ''} {q.get('question_content') or ''}")
+        p = doc.add_paragraph()
+        p.add_run(f"{q['question_sort']}. ").bold = True
+        if q.get('question_score') is not None:
+            p.add_run(f"（{q.get('question_score')}分） ")
+        p.add_run(q.get('question_content') or '')
+        
         if include_answer:
             if q.get("question_answer"):
                 doc.add_paragraph(f"答案：{q.get('question_answer')}")
             if q.get("question_analysis"):
                 doc.add_paragraph(f"解析：{q.get('question_analysis')}")
+        
+        doc.add_paragraph() # Spacer
 
     if footer:
         doc.add_paragraph(str(footer))
@@ -530,6 +645,7 @@ def export_word(paper_id: int):
     header = payload.get("header")
     footer = payload.get("footer")
     include_answer = bool(payload.get("include_answer", False))
+    paper_size = payload.get("paper_size", "A4") # A4 or A3
 
     session = get_session(current_app)
     paper = _table("exam_paper")
@@ -556,7 +672,7 @@ def export_word(paper_id: int):
         )
         questions = [dict(r) for r in session.execute(q_stmt).mappings().all()]
 
-        doc = _render_word(dict(p), questions, header, footer, include_answer)
+        doc = _render_word(dict(p), questions, header, footer, include_answer, paper_size)
 
         version_id = uuid.uuid4().hex
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -564,7 +680,21 @@ def export_word(paper_id: int):
         path = os.path.join(_export_base_dir(paper_id), filename)
         doc.save(path)
 
-        return jsonify({"version_id": version_id, "filename": filename})
+        # Record export history
+        history = _table("paper_export_history")
+        session.execute(
+            insert(history).values(
+                paper_id=paper_id,
+                version_id=version_id,
+                type="word",
+                filename=filename,
+                download_name=f"{p['paper_name']}.docx",
+                created_at=datetime.now()
+            )
+        )
+        session.commit()
+
+        return jsonify({"version_id": version_id, "filename": filename, "download_name": f"{p['paper_name']}.docx"})
     except SQLAlchemyError as err:
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 

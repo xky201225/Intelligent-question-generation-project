@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Delete, Download, Check, FullScreen, View, Rank } from '@element-plus/icons-vue'
+import { Refresh, Delete, Download, Check, FullScreen, View, Rank, Search } from '@element-plus/icons-vue'
 import { http } from '../api/http'
 import { getUser } from '../auth'
 import ExportPreview from '../components/ExportPreview.vue'
@@ -13,6 +13,23 @@ const isDrawerFullscreen = ref(false)
 const showPreview = ref(false)
 
 const papers = ref([])
+const subjects = ref([])
+const textbooks = ref([])
+
+const filters = reactive({
+  subject_id: null,
+  textbook_id: null,
+  publisher: '',
+})
+
+const publisherOptions = computed(() => {
+  const set = new Set()
+  for (const t of textbooks.value) {
+    if (t.publisher) set.add(t.publisher)
+  }
+  return Array.from(set)
+})
+
 const selectedPaperIds = ref([])
 const selectedPaperId = ref(null)
 const paper = ref(null)
@@ -27,6 +44,26 @@ const paperForm = reactive({
   is_closed_book: null,
   review_status: 0,
 })
+
+async function loadDicts() {
+  try {
+    const res = await http.get('/dicts/subjects')
+    subjects.value = res.data.items || []
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+async function loadTextbooks() {
+  try {
+    const params = {}
+    if (filters.subject_id) params.subject_id = filters.subject_id
+    const res = await http.get('/textbooks', { params })
+    textbooks.value = res.data.items || []
+  } catch (e) {
+    console.error(e)
+  }
+}
 
 async function submitReview(status) {
     if (!selectedPaperId.value) return
@@ -62,7 +99,12 @@ async function loadPapers() {
   loading.value = true
   error.value = ''
   try {
-    const resp = await http.get('/papers')
+    const params = {}
+    if (filters.subject_id) params.subject_id = filters.subject_id
+    if (filters.textbook_id) params.textbook_id = filters.textbook_id
+    if (filters.publisher) params.publisher = filters.publisher
+    
+    const resp = await http.get('/papers', { params })
     papers.value = resp.data.items || []
   } catch (e) {
     error.value = e?.message || '加载失败'
@@ -309,6 +351,8 @@ async function batchDelete() {
 }
 
 onMounted(async () => {
+  await loadDicts()
+  await loadTextbooks()
   await loadPapers()
 })
 </script>
@@ -320,7 +364,39 @@ onMounted(async () => {
       <el-card class="card" header="试卷列表">
         <template #header>
           <div class="header">
-            <div>试卷列表</div>
+            <div class="filters">
+              <el-select
+                v-model="filters.subject_id"
+                clearable
+                placeholder="科目"
+                style="width: 160px"
+                @change="
+                  async () => {
+                    filters.textbook_id = null
+                    await loadTextbooks()
+                    await loadPapers()
+                  }
+                "
+              >
+                <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
+              </el-select>
+
+              <el-select
+                v-model="filters.textbook_id"
+                clearable
+                placeholder="教材"
+                style="width: 200px"
+                @change="loadPapers"
+              >
+                <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? '-' + t.author : '')" :value="t.textbook_id" />
+              </el-select>
+
+              <el-select v-model="filters.publisher" clearable placeholder="出版社" style="width: 160px" @change="loadPapers">
+                <el-option v-for="p in publisherOptions" :key="p" :label="p" :value="p" />
+              </el-select>
+              
+              <el-button @click="loadPapers" :icon="Search">查询</el-button>
+            </div>
             <div class="actions">
               <el-button type="danger" plain @click="batchDelete" :disabled="selectedPaperIds.length === 0" :icon="Delete">批量删除</el-button>
               <el-button :loading="loading" @click="loadPapers" :icon="Refresh">刷新</el-button>
@@ -512,6 +588,13 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .actions {

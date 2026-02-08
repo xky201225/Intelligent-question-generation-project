@@ -189,17 +189,37 @@ def _run_generation(app, job_id: str, subject_id: int, chapter_ids: list[int], r
                     sample = session.execute(sample_stmt).mappings().all()
                     source_ids = [str(s["question_id"]) for s in sample]
 
-                    system_prompt = "你是一位大学出题助理。你必须严格输出 JSON 数组，不要输出任何多余文本。"
+                    system_prompt = "你是一位大学出题助理。你必须严格输出 JSON 数组，不要输出任何多余文本，严格按照题型输出，不要出错题型，除了单选题和多项题任何题型都不要有选项。"
+                    
+                    additional_reqs = ""
+                    if type_id == 1: # 单选题
+                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须且只能有一个正确答案。\n"
+                    elif type_id == 7: # 多选题
+                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须有两个或更多正确答案。\n"
+                    elif type_id == 2: # 判断题
+                        additional_reqs = "5) 题干必须是陈述句。\n6) 答案必须是“正确”或“错误”（或T/F）。\n"
+                    elif type_id == 4: # 计算题
+                        additional_reqs = "5) 必须是计算类题目，禁止出现选项(A/B/C/D)。\n6) 答案需包含具体计算结果。\n"
+                    elif type_id == 3: # 填空题
+                        additional_reqs = "5) 题干中必须包含填空符（如______）。\n6) 禁止出现选项。\n"
+                    elif type_id in [5, 6]: # 简答题, 作文
+                        additional_reqs = "5) 必须是主观题，禁止出现选项。\n"
+
+                    content_req = "4) question_content 内可包含选项（如A/B/C/D），但仍是纯文本\n"
+                    if type_id not in [1, 7]:
+                        content_req = "4) question_content 必须是纯文本，严禁包含选项(A/B/C/D)\n"
+
                     user_prompt = (
                         "请为指定教材章节生成题目，要求：\n"
                         "1) 只生成与章节相关的题\n"
                         "2) 难度与题型遵循要求\n"
-                        "3) 输出严格 JSON 数组，每个元素包含字段：question_content, question_answer, question_analysis, question_score\n"
-                        "4) question_content 内可包含选项（如A/B/C/D），但仍是纯文本\n\n"
+                        "3) 输出严格 JSON 数组，每个元素包含字段：type_id, question_content, question_answer, question_analysis, question_score\n"
+                        f"{content_req}"
+                        f"{additional_reqs}\n"
                         f"章节名称：{chapter['chapter_name']}\n"
                         f"章节概要：{summary if summary else '(暂无概要)'}\n"
                         f"目标数量：{count}\n"
-                        f"题型ID：{type_id}\n"
+                        f"题型ID：{type_id} (请在返回的JSON中将 type_id 设为 {type_id})\n"
                         f"难度ID：{difficulty_id}\n\n"
                         "参考题目（用于风格与覆盖点，不要重复）：\n"
                     )
@@ -293,12 +313,21 @@ def _run_generation(app, job_id: str, subject_id: int, chapter_ids: list[int], r
                                 except Exception:
                                     score_val = None
 
+                            returned_type_id = _pick_first(it, ["type_id", "type", "题型ID"])
+                            final_type_id = type_id
+                            if returned_type_id:
+                                try:
+                                    final_type_id = int(returned_type_id)
+                                except:
+                                    pass
+
                             collected.append(
                                 {
                                     "question_content": content,
                                     "question_answer": answer,
                                     "question_analysis": analysis,
                                     "question_score": score_val,
+                                    "type_id": final_type_id,
                                 }
                             )
 
@@ -313,7 +342,7 @@ def _run_generation(app, job_id: str, subject_id: int, chapter_ids: list[int], r
                         data = {
                             "subject_id": subject_id,
                             "chapter_id": chapter_id,
-                            "type_id": type_id,
+                            "type_id": it.get("type_id", type_id),
                             "difficulty_id": difficulty_id,
                             "question_content": it.get("question_content"),
                             "question_answer": it.get("question_answer"),
@@ -361,6 +390,346 @@ def _run_generation(app, job_id: str, subject_id: int, chapter_ids: list[int], r
                 },
             )
             _job_event(job_id, "job_error", str(err))
+
+
+def _extract_file_content(file) -> str:
+    """Extract text content from uploaded file (PDF/Word)"""
+    filename = file.filename.lower()
+    content = ""
+    
+    try:
+        if filename.endswith(".pdf"):
+            with pdfplumber.open(file) as pdf:
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    if text:
+                        content += text + "\n"
+        elif filename.endswith(".docx") or filename.endswith(".doc"):
+            doc = Document(file)
+            for para in doc.paragraphs:
+                content += para.text + "\n"
+        else:
+            # Try text decode
+            content = file.read().decode("utf-8", errors="ignore")
+    except Exception as e:
+        raise ValueError(f"文件解析失败: {str(e)}")
+        
+    return content.strip()
+
+
+def _run_variant_generation(app, job_id: str, subject_id: int, chapter_ids: list[int], source_content: str, create_user: str, source_type: str = "text", predefined_tasks: list[dict] = None):
+    """
+    Variant generation worker
+    source_content: Raw text (from file) or formatted questions (from paper)
+    predefined_tasks: Optional list of tasks [{"chapter_id": 1, "chapter_name": "...", "source_text": "...", "target_count": 5}]
+    """
+    with app.app_context():
+        _job_update(job_id, {"status": "running", "started_at": datetime.now().isoformat(timespec="seconds")})
+        _job_event(job_id, "job_start", "开始生成变式题目")
+        
+        qb = _table("question_bank")
+        ch = _table("textbook_chapter")
+        session = get_session(current_app)
+        inserted = 0
+        created_ids: list[int] = []
+
+        try:
+            # Prepare tasks
+            tasks = []
+            if predefined_tasks:
+                tasks = predefined_tasks
+            elif chapter_ids:
+                stmt = select(ch.c.chapter_id, ch.c.chapter_name, ch.c.content).where(ch.c.chapter_id.in_(chapter_ids))
+                rows = session.execute(stmt).mappings().all()
+                if not rows:
+                    raise ValueError("所选章节不存在")
+                # Default target: 5 per chapter
+                for r in rows:
+                    tasks.append({
+                        "chapter_id": int(r["chapter_id"]),
+                        "chapter_name": r["chapter_name"],
+                        "chapter_summary": r.get("content") or "",
+                        "target_count": 5,
+                        "source_text": source_content # Use global source content if not predefined
+                    })
+            else:
+                # No chapter selected: Global generation based on source
+                count = 10
+                if source_type == "paper":
+                    # Try to estimate count from source content
+                    matches = re.findall(r"^\d+\.\s+\[", source_content, re.MULTILINE)
+                    if matches:
+                        count = len(matches)
+                
+                tasks.append({
+                    "chapter_id": None,
+                    "chapter_name": "通用（无特定章节）",
+                    "chapter_summary": "",
+                    "target_count": count,
+                    "source_text": source_content
+                })
+
+            total_tasks = sum(t["target_count"] for t in tasks)
+            _job_event(job_id, "job_start", f"开始生成变式题目（共{total_tasks}题）", {"total_count": total_tasks})
+
+            for task in tasks:
+                cid = task["chapter_id"]
+                cname = task["chapter_name"]
+                csummary = task["chapter_summary"]
+                target_count_per_chapter = task["target_count"]
+                current_source = task.get("source_text") or source_content
+                
+                _job_event(job_id, "chapter_start", f"正在生成变式（章节：{cname}）...", {"chapter_id": cid})
+
+                system_prompt = (
+                    "你是专业的试题变式生成助手。你的任务是分析给定的【源材料】（Source Material），"
+                    "识别其中的题型、难度和出题风格，然后生成新的变式题目。\n"
+                    "要求：\n"
+                    "1. 严格输出 JSON 数组，不要包含 markdown 标记或额外文本。\n"
+                    "2. 题型必须映射到系统ID：1=单选, 2=判断, 3=填空, 4=计算, 5=简答, 6=作文, 7=多选。\n"
+                    "3. 题目内容应尽可能模仿【源材料】的风格。\n"
+                    "4. JSON字段：type_id, question_content, question_answer, question_analysis, question_score (可选).\n"
+                )
+
+                user_prompt = (
+                    f"【目标范围】\n名称：{cname}\n概要：{csummary[:500]}\n\n"
+                    f"【源材料】\n{current_source[:3000]}...\n\n" # Limit context to avoid overflow
+                    f"【任务】\n请基于源材料的风格，生成 {target_count_per_chapter} 道变式题目。\n"
+                    "如果源材料包含多种题型，请尽量覆盖。\n"
+                    "输出 JSON 数组："
+                )
+
+                client = get_deepseek_client()
+                collected = []
+                attempt = 0
+                
+                while len(collected) < target_count_per_chapter and attempt < 3:
+                    attempt += 1
+                    _job_event(job_id, "ai_start", f"正在请求模型（第{attempt}次）...")
+                    
+                    try:
+                        raw_chunks = []
+                        buf = ""
+                        last_flush = time.time()
+                        for chunk in client.chat_stream(system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.7):
+                            raw_chunks.append(chunk)
+                            buf += chunk
+                            now_ts = time.time()
+                            if len(buf) >= 200 or "\n" in buf or (now_ts - last_flush) >= 0.8:
+                                _job_event(job_id, "ai_delta", data={"text": buf})
+                                buf = ""
+                                last_flush = now_ts
+                        if buf:
+                            _job_event(job_id, "ai_delta", data={"text": buf})
+                        raw_text = "".join(raw_chunks)
+                        
+                        items = _extract_json_list(raw_text)
+                        
+                        for it in items:
+                            if len(collected) >= target_count_per_chapter: break
+                            
+                            # Validate and Normalize
+                            content = _pick_first(it, ["question_content", "content", "题干"])
+                            if not content: continue
+                            
+                            answer = _pick_first(it, ["question_answer", "answer", "答案"])
+                            analysis = _pick_first(it, ["question_analysis", "analysis", "解析"])
+                            
+                            tid = it.get("type_id")
+                            if not tid:
+                                # Try to guess or default to 5 (Short Answer) if unknown
+                                tid = 5 
+                            
+                            collected.append({
+                                "question_content": content,
+                                "question_answer": answer,
+                                "question_analysis": analysis,
+                                "type_id": int(tid),
+                                "question_score": it.get("question_score")
+                            })
+                            
+                        _job_event(job_id, "parse_ok", f"解析成功：{len(items)}条")
+                        
+                    except Exception as e:
+                        _job_event(job_id, "ai_error", f"生成出错：{str(e)}")
+                
+                # Insert into DB
+                now = datetime.now()
+                for it in collected:
+                    data = {
+                        "subject_id": subject_id,
+                        "chapter_id": cid, # Can be None
+                        "type_id": it["type_id"],
+                        "difficulty_id": 3, # Default to medium if not detected
+                        "question_content": it["question_content"],
+                        "question_answer": it["question_answer"],
+                        "question_analysis": it["question_analysis"],
+                        "question_score": it.get("question_score"),
+                        "is_ai_generated": 1,
+                        "review_status": 0,
+                        "create_user": create_user,
+                        "create_time": now,
+                        "update_time": now,
+                    }
+                    res = session.execute(insert(qb).values(**data))
+                    if res.inserted_primary_key:
+                        created_ids.append(res.inserted_primary_key[0])
+                    inserted += 1
+                
+                session.commit()
+                _job_event(job_id, "progress", f"章节/任务 {cname} 完成，入库 {len(collected)} 题")
+
+            _job_update(job_id, {
+                "status": "done", 
+                "inserted": inserted, 
+                "question_ids": created_ids,
+                "finished_at": datetime.now().isoformat(timespec="seconds")
+            })
+            _job_event(job_id, "job_done", f"全部完成，共生成 {inserted} 题")
+
+        except Exception as e:
+            session.rollback()
+            _job_update(job_id, {"status": "error", "error": str(e)})
+            _job_event(job_id, "job_error", str(e))
+
+
+@ai_bp.post("/generate-from-paper")
+def generate_from_paper():
+    payload = request.get_json(silent=True) or {}
+    paper_id = payload.get("paper_id")
+    subject_id = payload.get("subject_id")
+    chapter_ids = payload.get("chapter_ids") or []
+    create_user = payload.get("create_user") or "ai"
+
+    if not paper_id or not subject_id:
+        return jsonify({"error": {"message": "paper_id 和 subject_id 必填", "type": "BadRequest"}}), 400
+
+    # Fetch paper content
+    try:
+        session = get_session(current_app)
+        # Join with question bank to get content
+        pqr = _table("paper_question_relation")
+        qb = _table("question_bank")
+        ch = _table("textbook_chapter")
+        
+        stmt = (
+            select(
+                qb.c.question_content, 
+                qb.c.type_id, 
+                qb.c.question_score,
+                qb.c.chapter_id,
+                ch.c.chapter_name
+            )
+            .join(pqr, pqr.c.question_id == qb.c.question_id)
+            .outerjoin(ch, ch.c.chapter_id == qb.c.chapter_id)
+            .where(pqr.c.paper_id == paper_id)
+            .order_by(pqr.c.question_sort)
+        )
+        rows = session.execute(stmt).mappings().all()
+        
+        if not rows:
+            return jsonify({"error": {"message": "试卷为空或不存在", "type": "NotFound"}}), 404
+            
+        # Group by chapter_id
+        # { chapter_id: { "name": str, "questions": [] } }
+        grouped = {}
+        for r in rows:
+            cid = r["chapter_id"]
+            if cid is None:
+                cid = 0 # Use 0 for unknown/null chapter
+            
+            if cid not in grouped:
+                grouped[cid] = {
+                    "chapter_id": cid if cid != 0 else None,
+                    "chapter_name": r["chapter_name"] if r["chapter_name"] else "未分类章节",
+                    "questions": []
+                }
+            
+            grouped[cid]["questions"].append(r)
+        
+        # Construct tasks
+        tasks = []
+        for cid, group in grouped.items():
+            # Construct source text for this chapter
+            source_text = f"【{group['chapter_name']} 题目列表】\n"
+            for i, q in enumerate(group["questions"], 1):
+                source_text += f"{i}. [类型ID:{q['type_id']}] {q['question_content']} ({q['question_score']}分)\n"
+            
+            tasks.append({
+                "chapter_id": group["chapter_id"],
+                "chapter_name": group["chapter_name"],
+                "chapter_summary": "", # No summary available from this join, maybe fine
+                "target_count": len(group["questions"]), # Generate same amount as source
+                "source_text": source_text
+            })
+            
+    except SQLAlchemyError as e:
+        return jsonify({"error": {"message": str(e), "type": "DatabaseError"}}), 500
+
+    job_id = uuid.uuid4().hex
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id, "status": "queued", "inserted": 0, "question_ids": [],
+            "created_at": datetime.now().isoformat(timespec="seconds"), "seq": 0, "events": []
+        }
+
+    app = current_app._get_current_object()
+    _executor.submit(_run_variant_generation, app, job_id, int(subject_id), [], "", create_user, "paper", tasks)
+    
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@ai_bp.post("/generate-from-file")
+def generate_from_file():
+    if "file" not in request.files:
+        return jsonify({"error": {"message": "未上传文件", "type": "BadRequest"}}), 400
+        
+    file = request.files["file"]
+    
+    # Check size (10MB limit)
+    file.seek(0, os.SEEK_END)
+    size = file.tell()
+    file.seek(0)
+    if size > 10 * 1024 * 1024:
+         return jsonify({"error": {"message": "文件大小不能超过 10MB", "type": "BadRequest"}}), 400
+
+    filename = file.filename.lower() if file.filename else ""
+    if not filename.endswith(('.pdf', '.doc', '.docx')):
+         return jsonify({"error": {"message": "不支持的文件格式，仅支持 PDF/Word", "type": "BadRequest"}}), 400
+
+    subject_id = request.form.get("subject_id")
+    chapter_ids_str = request.form.get("chapter_ids")
+    create_user = request.form.get("create_user") or "ai"
+    
+    if not subject_id:
+        return jsonify({"error": {"message": "subject_id 必填", "type": "BadRequest"}}), 400
+        
+    try:
+        if chapter_ids_str:
+            chapter_ids = [int(x) for x in chapter_ids_str.split(",") if x.strip()]
+        else:
+            chapter_ids = []
+    except:
+        return jsonify({"error": {"message": "chapter_ids 格式错误", "type": "BadRequest"}}), 400
+
+    try:
+        content = _extract_file_content(file)
+        if not content:
+             return jsonify({"error": {"message": "文件内容为空或无法解析", "type": "BadRequest"}}), 400
+    except Exception as e:
+        return jsonify({"error": {"message": str(e), "type": "FileError"}}), 400
+
+    job_id = uuid.uuid4().hex
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id, "status": "queued", "inserted": 0, "question_ids": [],
+            "created_at": datetime.now().isoformat(timespec="seconds"), "seq": 0, "events": []
+        }
+
+    app = current_app._get_current_object()
+    _executor.submit(_run_variant_generation, app, job_id, int(subject_id), chapter_ids, content, create_user, "file")
+    
+    return jsonify({"ok": True, "job_id": job_id})
 
 
 @ai_bp.post("/generate-questions")
@@ -646,16 +1015,36 @@ def _run_generation_v2(app, job_id: str, subject_id: int, chapter_dist: dict[int
                     summary = chapter_info.get("content") or ""
                     
                     system_prompt = "你是出题助理。你必须严格输出 JSON 数组，不要输出任何多余文本。"
+                    
+                    additional_reqs = ""
+                    if type_id == 1: # 单选题
+                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须且只能有一个正确答案。\n"
+                    elif type_id == 7: # 多选题
+                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须有两个或更多正确答案。\n"
+                    elif type_id == 2: # 判断题
+                        additional_reqs = "5) 题干必须是陈述句。\n6) 答案必须是“正确”或“错误”（或T/F）。\n"
+                    elif type_id == 4: # 计算题
+                        additional_reqs = "5) 必须是计算类题目，禁止出现选项(A/B/C/D)。\n6) 答案需包含具体计算结果。\n"
+                    elif type_id == 3: # 填空题
+                        additional_reqs = "5) 题干中必须包含填空符（如______）。\n6) 禁止出现选项。\n"
+                    elif type_id in [5, 6]: # 简答题, 作文
+                        additional_reqs = "5) 必须是主观题，禁止出现选项。\n"
+
+                    content_req = "4) question_content 内可包含选项（如A/B/C/D），但仍是纯文本\n"
+                    if type_id not in [1, 7]:
+                        content_req = "4) question_content 必须是纯文本，严禁包含选项(A/B/C/D)\n"
+
                     user_prompt = (
                         "请为指定教材章节生成题目，要求：\n"
                         "1) 只生成与章节相关的题\n"
                         "2) 难度与题型遵循要求\n"
-                        "3) 输出严格 JSON 数组，每个元素包含字段：question_content, question_answer, question_analysis, question_score\n"
-                        "4) question_content 内可包含选项（如A/B/C/D），但仍是纯文本\n\n"
+                        "3) 输出严格 JSON 数组，每个元素包含字段：type_id, question_content, question_answer, question_analysis, question_score\n"
+                        f"{content_req}"
+                        f"{additional_reqs}\n"
                         f"章节名称：{chapter_info['chapter_name']}\n"
                         f"章节概要：{summary if summary else '(暂无概要)'}\n"
                         f"目标数量：{count}\n"
-                        f"题型ID：{type_id}\n"
+                        f"题型ID：{type_id} (请在返回的JSON中将 type_id 设为 {type_id})\n"
                         f"难度ID：{difficulty_id}\n\n"
                         "参考题目（用于风格与覆盖点，不要重复）：\n"
                     )
@@ -749,12 +1138,21 @@ def _run_generation_v2(app, job_id: str, subject_id: int, chapter_dist: dict[int
                                 except Exception:
                                     score_val = None
 
+                            returned_type_id = _pick_first(it, ["type_id", "type", "题型ID"])
+                            final_type_id = type_id
+                            if returned_type_id:
+                                try:
+                                    final_type_id = int(returned_type_id)
+                                except:
+                                    pass
+
                             collected.append(
                                 {
                                     "question_content": content,
                                     "question_answer": answer,
                                     "question_analysis": analysis,
                                     "question_score": score_val,
+                                    "type_id": final_type_id,
                                 }
                             )
 
@@ -769,7 +1167,7 @@ def _run_generation_v2(app, job_id: str, subject_id: int, chapter_dist: dict[int
                         data = {
                             "subject_id": subject_id,
                             "chapter_id": cid,
-                            "type_id": type_id,
+                            "type_id": it.get("type_id", type_id),
                             "difficulty_id": difficulty_id,
                             "question_content": it.get("question_content"),
                             "question_answer": it.get("question_answer"),
@@ -896,6 +1294,7 @@ def list_pending():
             qb.c.question_id,
             qb.c.subject_id,
             qb.c.chapter_id,
+            ch.c.textbook_id,
             qb.c.type_id,
             qb.c.difficulty_id,
             sd.c.subject_name.label("subject_name"),
