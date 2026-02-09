@@ -65,3 +65,5 @@ def create_app() -> Flask:
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), code
 
     return app
+
+

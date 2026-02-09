@@ -5,12 +5,15 @@ import os
 import uuid
 from datetime import datetime
 
+from io import BytesIO
+import tempfile
 from flask import Blueprint, current_app, jsonify, request, send_file
 from sqlalchemy import and_, delete, func, insert, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_SECTION, WD_ORIENT
+from docx.enum.table import WD_ROW_HEIGHT_RULE
 from docx.shared import Pt, Cm, RGBColor, Mm
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -56,7 +59,7 @@ def _set_columns(section, cols):
     cols_elm.set(qn('w:space'), '425') # ~1.5cm gap
     cols_elm.set(qn('w:sep'), '1') # Separator line
 
-def _render_sheet_word(sheet: dict, items: list[dict], styles: dict[int, dict], paper_size: str = 'A3') -> Document:
+def _render_sheet_word(sheet: dict, items: list[dict], styles: dict[int, dict], paper_size: str = 'A3', ticket_no_digits: int = 10) -> Document:
     doc = Document()
     
     # 1. Page Setup
@@ -122,10 +125,11 @@ def _render_sheet_word(sheet: dict, items: list[dict], styles: dict[int, dict], 
     right_p.add_run("准考证号填涂区").bold = True
     
     # Mock grid for ticket number (10 cols x 10 rows digits)
-    ticket_table = right_cell.add_table(rows=10, cols=10)
+    # ticket_no_digits comes from request
+    ticket_table = right_cell.add_table(rows=10, cols=ticket_no_digits)
     ticket_table.style = 'Table Grid'
     for r in range(10):
-        for c in range(10):
+        for c in range(ticket_no_digits):
             cell = ticket_table.cell(r, c)
             cell.text = f"[{r}]"
             cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -139,7 +143,7 @@ def _render_sheet_word(sheet: dict, items: list[dict], styles: dict[int, dict], 
     if paper_size == 'A3':
         new_section = doc.add_section(WD_SECTION.CONTINUOUS)
         try:
-            _set_columns(new_section, 3) # 3 Columns layout like standard A3 sheet
+            _set_columns(new_section, 2) # 2 Columns layout for A3
         except Exception:
              # Fallback if XML manip fails, just continue single col? 
              # Or log it.
@@ -213,7 +217,12 @@ def _render_sheet_word(sheet: dict, items: list[dict], styles: dict[int, dict], 
                 frame_table = doc.add_table(rows=1, cols=1)
                 frame_table.style = 'Table Grid'
                 frame_table.autofit = False
-                frame_table.columns[0].width = Cm(12) # Fit in column
+                
+                # Dynamic width based on column layout
+                # A3 (2 cols): (42 - 3 margins)/2 = 19.5. Safe ~18.0
+                # A4 (1 col): 21 - 4 margins = 17. Safe ~17
+                f_width = Cm(18.0) if paper_size == 'A3' else Cm(17)
+                frame_table.columns[0].width = f_width
                 
                 cell = frame_table.cell(0, 0)
                 cp = cell.paragraphs[0]
@@ -225,13 +234,29 @@ def _render_sheet_word(sheet: dict, items: list[dict], styles: dict[int, dict], 
                 
                 if widget == "input_line":
                     lines = config.get("lines") or 1
+                    # Set row height for input lines to ensure spacing
+                    frame_table.rows[0].height = Cm(1.0 * lines)
+                    frame_table.rows[0].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+                    
+                    # Add content (optional, just lines)
+                    # For input_line, we might want actual lines inside?
+                    # But the frame itself is the box.
+                    # Let's add empty paragraphs with spacing
                     for _ in range(lines):
-                        cell.add_paragraph("_______________________________________")
+                         p = cell.add_paragraph()
+                         p.paragraph_format.space_before = Pt(12)
+                         p.paragraph_format.space_after = Pt(12)
                 
                 elif widget == "text_area":
                     rows = config.get("rows") or 5
-                    for _ in range(rows):
-                        cell.add_paragraph()
+                    # Set fixed height based on rows
+                    # Approx 0.8cm per row
+                    total_height = 0.8 * rows
+                    frame_table.rows[0].height = Cm(total_height)
+                    frame_table.rows[0].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+                    
+                    # Add empty paragraphs to push content if needed, but height rule handles frame size
+                    # cell.add_paragraph() 
                         
                 elif widget == "grid_area":
                     style_type = config.get("style")
@@ -242,12 +267,10 @@ def _render_sheet_word(sheet: dict, items: list[dict], styles: dict[int, dict], 
                              cp.paragraph_format.space_after = Pt(12)
                              cp.add_run("_" * 45).font.color.rgb = RGBColor(200, 0, 0)
                     else:
-                        # Grid
-                        # Nested table for grid?
-                        # Too complex for nested, just placeholder
+                        # Grid placeholder
                         cell.add_paragraph("[作文方格区域]")
-                        pass
-                
+                        frame_table.rows[0].height = Cm(5) # Default height for grid
+                        
                 doc.add_paragraph() # Spacer between frames
             except Exception as e:
                  print(f"Error rendering sub item {item.get('question_id')}: {e}")
@@ -260,6 +283,7 @@ def _render_sheet_word(sheet: dict, items: list[dict], styles: dict[int, dict], 
 def export_sheet_word(sheet_id: int):
     payload = request.get_json(silent=True) or {}
     paper_size = payload.get("paper_size", "A3") # Default A3
+    ticket_no_digits = int(payload.get("ticket_no_digits", 10))
 
     t_sheet = _table("exam_answer_sheet")
     t_rel = _table("sheet_question_relation")
@@ -281,17 +305,21 @@ def export_sheet_word(sheet_id: int):
             s_rows = session.execute(select(t_style).where(t_style.c.style_id.in_(style_ids))).mappings().all()
             styles = {r["style_id"]: dict(r) for r in s_rows}
             
-        doc = _render_sheet_word(dict(sheet), items, styles, paper_size=paper_size)
+        doc = _render_sheet_word(dict(sheet), items, styles, paper_size=paper_size, ticket_no_digits=ticket_no_digits)
         
-        filename = f"sheet_{sheet_id}_{uuid.uuid4().hex[:8]}.docx"
-        path = os.path.join(_export_base_dir(f"sheet_{sheet_id}"), filename)
-        doc.save(path)
+        # Stream directly
+        f = BytesIO()
+        doc.save(f)
+        f.seek(0)
         
-        return jsonify({
-            "filename": filename, 
-            "download_name": f"{sheet.get('sheet_name', '答题卡')}.docx",
-            "download_url": f"/exports/sheet_{sheet_id}/{filename}"
-        }) # Simplified URL concept
+        filename = f"{sheet.get('sheet_name', '答题卡')}.docx"
+        try:
+            from urllib.parse import quote
+            filename = quote(filename)
+        except:
+            pass
+            
+        return send_file(f, as_attachment=True, download_name=f"{sheet.get('sheet_name', '答题卡')}.docx")
         
     except SQLAlchemyError as err:
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
@@ -305,23 +333,56 @@ def export_sheet_pdf(sheet_id: int):
     if docx2pdf_convert is None:
         return jsonify({"error": {"message": "PDF 导出不可用：docx2pdf 未安装", "type": "NotSupported"}}), 400
         
-    # Generate Word first
+    payload = request.get_json(silent=True) or {}
+    paper_size = payload.get("paper_size", "A3")
+    ticket_no_digits = int(payload.get("ticket_no_digits", 10))
+
+    t_sheet = _table("exam_answer_sheet")
+    t_rel = _table("sheet_question_relation")
+    t_style = _table("answer_area_style")
+    session = get_session(current_app)
+    
     try:
-        word_resp = export_sheet_word(sheet_id)
-        if getattr(word_resp, "status_code", 200) != 200:
-            return word_resp
+        sheet = session.execute(select(t_sheet).where(t_sheet.c.sheet_id == sheet_id)).mappings().first()
+        if not sheet:
+            return jsonify({"error": {"message": "答题卡不存在", "type": "NotFound"}}), 404
             
-        data = word_resp.get_json()
-        docx_filename = data["filename"]
-        # Assuming path logic matches _export_base_dir
-        base_dir = _export_base_dir(f"sheet_{sheet_id}")
-        docx_path = os.path.join(base_dir, docx_filename)
+        items = session.execute(select(t_rel).where(t_rel.c.sheet_id == sheet_id).order_by(t_rel.c.area_sort)).mappings().all()
+        items = [dict(r) for r in items]
         
-        pdf_filename = docx_filename.replace(".docx", ".pdf")
-        pdf_path = os.path.join(base_dir, pdf_filename)
+        style_ids = set(it["style_id"] for it in items if it["style_id"])
+        styles = {}
+        if style_ids:
+            s_rows = session.execute(select(t_style).where(t_style.c.style_id.in_(style_ids))).mappings().all()
+            styles = {r["style_id"]: dict(r) for r in s_rows}
+            
+        doc = _render_sheet_word(dict(sheet), items, styles, paper_size=paper_size, ticket_no_digits=ticket_no_digits)
         
-        docx2pdf_convert(docx_path, pdf_path)
-        return jsonify({"filename": pdf_filename, "download_url": f"/exports/sheet_{sheet_id}/{pdf_filename}"})
+        # Use temp files for conversion
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp_docx:
+            doc.save(tmp_docx.name)
+            tmp_docx_path = tmp_docx.name
+            
+        tmp_pdf_path = tmp_docx_path.replace(".docx", ".pdf")
+        
+        try:
+            docx2pdf_convert(tmp_docx_path, tmp_pdf_path)
+            
+            with open(tmp_pdf_path, "rb") as f:
+                pdf_data = f.read()
+                
+            return send_file(
+                BytesIO(pdf_data), 
+                as_attachment=True, 
+                download_name=f"{sheet.get('sheet_name', '答题卡')}.pdf",
+                mimetype='application/pdf'
+            )
+        finally:
+            if os.path.exists(tmp_docx_path):
+                os.remove(tmp_docx_path)
+            if os.path.exists(tmp_pdf_path):
+                os.remove(tmp_pdf_path)
+                
     except Exception as e:
         return jsonify({"error": {"message": f"PDF转换失败: {str(e)}", "type": "ConversionError"}}), 500
 

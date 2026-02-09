@@ -455,11 +455,10 @@ def _run_variant_generation(app, job_id: str, subject_id: int, chapter_ids: list
             else:
                 # No chapter selected: Global generation based on source
                 count = 10
-                if source_type == "paper":
-                    # Try to estimate count from source content
-                    matches = re.findall(r"^\d+\.\s+\[", source_content, re.MULTILINE)
-                    if matches:
-                        count = len(matches)
+                # Try to estimate count from source content (works for both paper and file)
+                matches = re.findall(r"^\d+[\.、\s]", source_content, re.MULTILINE)
+                if matches:
+                    count = len(matches)
                 
                 tasks.append({
                     "chapter_id": None,
@@ -849,6 +848,86 @@ def generate_questions():
     app = current_app._get_current_object()
     _executor.submit(_run_generation_v2, app, job_id, int(subject_id), final_chapter_dist, validated_rules, create_user)
     return jsonify({"ok": True, "job_id": job_id, "queued": True})
+
+
+@ai_bp.post("/generate-answer-sheet-preview")
+def generate_answer_sheet_preview():
+    payload = request.get_json(silent=True) or {}
+    paper_id = payload.get("paper_id")
+    if not paper_id:
+        return jsonify({"error": {"message": "paper_id 必填", "type": "BadRequest"}}), 400
+
+    try:
+        session = get_session(current_app)
+        pqr = _table("paper_question_relation")
+        qb = _table("question_bank")
+        
+        stmt = (
+            select(qb.c.question_content, qb.c.type_id, qb.c.question_score)
+            .join(pqr, pqr.c.question_id == qb.c.question_id)
+            .where(pqr.c.paper_id == paper_id)
+            .order_by(pqr.c.question_sort)
+        )
+        questions = session.execute(stmt).mappings().all()
+        
+        if not questions:
+            return jsonify({"error": {"message": "试卷为空", "type": "NotFound"}}), 404
+            
+        q_text = ""
+        for i, q in enumerate(questions, 1):
+            q_text += f"{i}. [类型:{q['type_id']}] {q['question_content']} ({q['question_score']}分)\n"
+            
+        system_prompt = (
+            "你是一个专业的答题卡排版助手。请根据提供的试题列表，生成一份符合A3双栏排版标准的Markdown答题卡，不需要题干，只需要答题区域。\n"
+            "【整体布局要求】：\n"
+            "1. 页面顶部通栏（分栏靠左边）：\n"
+            "   - 主标题：居中，字号较大（如<h1>XX考试答题卡</h1>）。\n"
+            "   - 考生信息栏：使用表格布局，包含姓名、班级、考号、座位号等填写框。\n"
+            "   - 注意事项：列出3-4条填涂规范。\n"
+            "   - 准考证号填涂区：右侧生成一个 10列 x 10行 的表格（table class='ticket-no-table'），表头为0-9。\n"
+            "2. 答题区域（分两栏）：\n"
+            "   - 请将内容包裹在 <div class='columns-container'> ... </div> 中（如果Markdown支持HTML，请直接使用HTML标签以保证布局）。\n"
+            "   - 题型之间要有明显的标题（<h2>一、选择题</h2>）。\n"
+            "3. 题型排版细节：\n"
+            "   - 选择题：每5题一组，使用 <span class='option-box'>A</span> <span class='option-box'>B</span> ... 形式。\n"
+            "   - 填空题：生成足够长度的下划线（________________）。\n"
+            "   - 简答/计算/作文：生成带有题号的空白区域，可以使用 <div class='essay-line'></div> 重复多次来模拟横线。\n"
+            "4. 输出格式：\n"
+            "   - 混合使用 Markdown 和 HTML 以达到最佳效果。\n"
+            "   - 不要使用代码块包裹，直接输出内容。\n"
+            "   - 确保 HTML 标签闭合正确。"
+        )
+        user_prompt = f"请为以下试题生成答题卡Markdown：\n\n{q_text}"
+        
+        client = get_deepseek_client()
+        
+        def stream_response():
+            try:
+                # First yield the job status (optional, but good for connection check)
+                yield f"data: {json.dumps({'type': 'start'})}\n\n"
+                
+                full_content = ""
+                for chunk in client.chat_stream(system_prompt, user_prompt):
+                    full_content += chunk
+                    # Escape newlines for SSE data payload
+                    safe_chunk = json.dumps({"type": "delta", "content": chunk})
+                    yield f"data: {safe_chunk}\n\n"
+                
+                # Final cleanup of the complete content
+                markdown_content = full_content
+                markdown_content = re.sub(r"^```markdown\s*", "", markdown_content).strip()
+                markdown_content = re.sub(r"^```\s*", "", markdown_content).strip()
+                markdown_content = re.sub(r"\s*```$", "", markdown_content).strip()
+                
+                # Send the final cleaned content
+                yield f"data: {json.dumps({'type': 'done', 'markdown': markdown_content})}\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+        return Response(stream_with_context(stream_response()), mimetype="text/event-stream")
+        
+    except Exception as e:
+        return jsonify({"error": {"message": str(e), "type": "ServerError"}}), 500
 
 
 def _run_generation_v2(app, job_id: str, subject_id: int, chapter_dist: dict[int, float], rules: list[dict], create_user: str):
@@ -1374,7 +1453,17 @@ def verify_question():
 def _run_parsing(app, job_id: str, text: str, subject_id: int | None, chapter_id: int | None, type_id: int | None, difficulty_id: int | None, create_user: str):
     with app.app_context():
         _job_update(job_id, {"status": "running", "started_at": datetime.now().isoformat(timespec="seconds")})
-        _job_event(job_id, "job_start", "开始AI解析")
+        
+        # Estimate total count
+        estimated_count = 0
+        try:
+            matches = re.findall(r"^\d+[\.、\s]", text, re.MULTILINE)
+            if matches:
+                estimated_count = len(matches)
+        except:
+            pass
+            
+        _job_event(job_id, "job_start", f"开始AI解析（预计{estimated_count}题）", {"total_count": estimated_count})
         
         # qb = _table("question_bank")
         # session = get_session(current_app)
@@ -1387,10 +1476,11 @@ def _run_parsing(app, job_id: str, text: str, subject_id: int | None, chapter_id
             user_prompt = (
                 "请解析以下题目文本，提取题目信息。\n"
                 "要求：\n"
-                "1) 输出严格 JSON 数组，每个元素包含：question_content, question_answer, question_analysis, question_score\n"
+                "1) 输出严格 JSON 数组，每个元素包含：type_id, question_content, question_answer, question_analysis, question_score\n"
                 "2) 如果文本中缺少答案或解析，请你根据题目内容自动生成正确的答案和详细解析\n"
                 "3) question_content 应包含题干和选项（如果是选择题）\n"
                 "4) 自动判断题目分值，如果无法判断则默认为 2\n"
+                "5) 自动判断题型并返回 type_id：1=单选题, 2=判断题, 3=填空题, 4=计算题, 5=简答题, 6=作文题, 7=多选题。如果无法判断则默认为 5\n"
                 "\n待解析文本：\n"
                 f"{text[:50000]}"
             )
@@ -1450,10 +1540,24 @@ def _run_parsing(app, job_id: str, text: str, subject_id: int | None, chapter_id
                 else:
                     score_val = 2.0
 
+                # Determine type_id: detected > provided > default(5)
+                final_type_id = type_id
+                detected_type = it.get("type_id")
+                if detected_type:
+                    try:
+                        dt = int(detected_type)
+                        if dt > 0:
+                            final_type_id = dt
+                    except:
+                        pass
+                
+                if not final_type_id:
+                    final_type_id = 5
+
                 data = {
                     "subject_id": subject_id,
                     "chapter_id": chapter_id,
-                    "type_id": type_id,
+                    "type_id": final_type_id,
                     "difficulty_id": difficulty_id,
                     "question_content": content,
                     "question_answer": answer,

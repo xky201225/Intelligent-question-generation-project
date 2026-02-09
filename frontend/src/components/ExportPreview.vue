@@ -271,23 +271,36 @@ async function doExportWord() {
     // Use backend generation for better layout support (A3 columns)
     const resp = await http.post(`/papers/${props.paper.paper_id}/export/word`, {
       paper_size: paperSize.value
+    }, {
+      responseType: 'blob'
     })
     
-    const { filename, version_id, download_name } = resp.data
-    
-    // Trigger download using blob to handle auth
-    // Path: /papers/<paper_id>/exports/<version_id>/download
-    const downloadResp = await http.get(`/papers/${props.paper.paper_id}/exports/${version_id}/download`, {
-        responseType: 'blob'
-    })
-    
-    const blob = new Blob([downloadResp.data], { 
+    const blob = new Blob([resp.data], { 
         type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
     })
+    
+    let downloadName = props.paper?.paper_name ? `${props.paper.paper_name}.docx` : `paper_export.docx`
+    const disposition = resp.headers['content-disposition']
+    if (disposition) {
+      if (disposition.includes('filename=')) {
+        downloadName = disposition.split('filename=')[1].split(';')[0].replace(/['"]/g, '')
+      }
+      if (disposition.includes("filename*=")) {
+         const match = disposition.match(/filename\*=UTF-8''(.+)/)
+         if (match && match[1]) {
+           try {
+             downloadName = decodeURIComponent(match[1])
+           } catch (e) {
+             console.warn('Decode filename failed', e)
+           }
+         }
+      }
+    }
+    
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = download_name || filename
+    link.download = downloadName
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)

@@ -426,11 +426,13 @@ const stream = reactive({
   output: '',
   progress: 0,
   generatedCount: 0,
+  totalCount: 0,
   currentStage: '',
 })
 const streamBodyRef = ref(null)
 let eventSource = null
 let typingTimer = null
+let pollingTimer = null
 let outputQueue = ''
 
 function pushLine(text) {
@@ -471,6 +473,14 @@ function enqueueOutput(text) {
         stream.output = stream.output.slice(stream.output.length - 200000)
       }
       
+      // Update progress
+      if (stream.totalCount > 0) {
+        const matches = stream.output.match(/"question_analysis"/g)
+        const count = matches ? matches.length : 0
+        stream.generatedCount = Math.max(stream.generatedCount, count)
+        stream.progress = Math.min(100, Math.floor((stream.generatedCount / stream.totalCount) * 100))
+      }
+
       requestAnimationFrame(() => {
           if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight
       })
@@ -482,6 +492,10 @@ function stopStream() {
   if (eventSource) {
     eventSource.close()
     eventSource = null
+  }
+  if (pollingTimer) {
+    clearInterval(pollingTimer)
+    pollingTimer = null
   }
   stopTyping()
 }
@@ -495,73 +509,67 @@ function startStream(jobId) {
   stream.output = ''
   stream.progress = 0
   stream.generatedCount = 0
+  stream.totalCount = 0
   stream.currentStage = '准备中...'
   
   outputQueue = ''
   pushLine(`任务已创建：${jobId}`)
 
-  // Get token if needed
-  const token = getToken()
-  const url = `${http.defaults.baseURL}/ai/jobs/${jobId}/events${token ? `?token=${encodeURIComponent(token)}` : ''}`
+  let lastEventId = 0
   
-  eventSource = new EventSource(url)
-  eventSource.onmessage = async (e) => {
+  pollingTimer = setInterval(async () => {
     try {
-      const ev = JSON.parse(e.data)
-      if (ev.type === 'ai_delta') {
-        const t = ev?.data?.text || ''
-        stream.currentStage = '正在解析...'
-        enqueueOutput(t)
-      } else {
-        const ts = ev.ts ? `【${ev.ts}】` : ''
-        const msg = ev.message ? ` ${ev.message}` : ''
-        pushLine(`${ts}${ev.type}${msg}`)
-        
-        if (ev.type === 'job_done') {
-          stream.status = 'done'
-          stream.currentStage = '解析完成'
-          stream.progress = 100
+      const resp = await http.get(`/ai/jobs/${jobId}`)
+      const job = resp.data.job
+      if (!job) return
+      
+      const events = job.events || []
+      const newEvents = events.filter(e => (e.id || 0) > lastEventId)
+      newEvents.sort((a, b) => (a.id || 0) - (b.id || 0))
+      
+      for (const ev of newEvents) {
+        lastEventId = ev.id || lastEventId
+        if (ev.type === 'ai_delta') {
+          const t = ev?.data?.text || ''
+          stream.currentStage = '正在解析...'
+          enqueueOutput(t)
+        } else {
+          const ts = ev.ts ? `【${ev.ts}】` : ''
+          const msg = ev.message ? ` ${ev.message}` : ''
+          pushLine(`${ts}${ev.type}${msg}`)
           
-          stopStream()
-          
-          // Fetch result items
-          try {
-             const jobResp = await http.get(`/ai/jobs/${jobId}`)
-             const items = jobResp.data.job?.items || []
-             if (items.length === 0) {
-                 ElMessage.warning('未能解析出题目')
-             } else {
-                 openReviewDialog(items)
+          if (ev.type === 'job_start') {
+             if (ev.data && ev.data.total_count) {
+                 stream.totalCount = ev.data.total_count
              }
-          } catch (e) {
-              ElMessage.error('获取解析结果失败: ' + e.message)
-          }
-          
-          // Close stream dialog after delay
-          setTimeout(() => {
-             stream.visible = false
-          }, 1000)
-        } else if (ev.type === 'job_error') {
-          stream.status = 'error'
-          stream.currentStage = '解析出错'
-          stopStream()
-        } else if (ev.type === 'progress') {
+          } else if (ev.type === 'job_done') {
+            stream.status = 'done'
+            stream.currentStage = '解析完成'
+            stream.progress = 100
+            stopStream()
+            
+            const items = job.items || []
+            if (items.length === 0) {
+                 ElMessage.warning('未能解析出题目')
+            } else {
+                 openReviewDialog(items)
+            }
+            setTimeout(() => { stream.visible = false }, 1000)
+          } else if (ev.type === 'job_error') {
+            stream.status = 'error'
+            stream.currentStage = '解析出错'
+            stopStream()
+          } else if (ev.type === 'progress') {
              if (ev.data && ev.data.inserted) {
                  stream.generatedCount = ev.data.inserted
              }
+          }
         }
       }
-    } catch {
-      pushLine(e.data || '')
+    } catch (e) {
+      console.error(e)
     }
-  }
-
-  eventSource.onerror = () => {
-    if (stream.status === 'running') {
-      pushLine('连接中断')
-    }
-    stopStream()
-  }
+  }, 1000)
 }
 
 // AI Review Logic
@@ -583,9 +591,9 @@ async function openReviewDialog(items) {
       // Ensure IDs are mapped if backend returned defaults
       subject_id: aiConfigDialog.form.subject_id, // Use selected subject
       // chapter/type/difficulty might be 0 or None from backend
-      chapter_id: null,
-      type_id: null,
-      difficulty_id: null,
+      chapter_id: it.chapter_id || null,
+      type_id: it.type_id || null,
+      difficulty_id: it.difficulty_id || null,
       // Add UI state
       _error: false
   }))
@@ -979,14 +987,14 @@ onMounted(async () => {
             <!-- Configurable Fields -->
             <el-table-column label="题型" width="130">
                 <template #default="{ row }">
-                    <el-select v-model="row.type_id" :class="{ 'is-error': row._error && !row.type_id }">
+                    <el-select v-model="row.type_id" :class="{ 'is-error': row._error && !row.type_id }" placeholder="请选择">
                         <el-option v-for="t in types" :key="t.type_id" :label="t.type_name" :value="t.type_id" />
                     </el-select>
                 </template>
             </el-table-column>
             <el-table-column label="难度" width="110">
                 <template #default="{ row }">
-                    <el-select v-model="row.difficulty_id" :class="{ 'is-error': row._error && !row.difficulty_id }">
+                    <el-select v-model="row.difficulty_id" :class="{ 'is-error': row._error && !row.difficulty_id }" placeholder="请选择">
                         <el-option v-for="d in difficulties" :key="d.difficulty_id" :label="d.difficulty_name" :value="d.difficulty_id" />
                     </el-select>
                 </template>
@@ -1001,6 +1009,7 @@ onMounted(async () => {
                         check-strictly
                         :class="{ 'is-error': row._error && !row.chapter_id }"
                         style="width: 100%"
+                        placeholder="请选择"
                     />
                 </template>
             </el-table-column>

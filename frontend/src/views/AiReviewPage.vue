@@ -417,14 +417,14 @@ function stopStream() {
     eventSource.close()
     eventSource = null
   }
-  stopTyping()
-}
-
-function startStream(jobId) {
   if (pollingTimer) {
     clearInterval(pollingTimer)
     pollingTimer = null
   }
+  stopTyping()
+}
+
+function startStream(jobId) {
   stopStream()
   stream.visible = true
   stream.job_id = jobId
@@ -451,59 +451,87 @@ function startStream(jobId) {
   outputQueue = ''
   pushLine(`任务已创建：${jobId}`)
 
-  const token = getToken()
-  const url = `${http.defaults.baseURL}/ai/jobs/${jobId}/events${token ? `?token=${encodeURIComponent(token)}` : ''}`
-  eventSource = new EventSource(url)
-  eventSource.onmessage = (e) => {
+  let lastEventId = 0
+
+  pollingTimer = setInterval(async () => {
     try {
-      const ev = JSON.parse(e.data)
-      if (ev.type === 'ai_delta') {
-        const t = ev?.data?.text || ''
-        stream.currentStage = '正在生成题目...'
-        enqueueOutput(t)
-      } else {
-        const ts = ev.ts ? `【${ev.ts}】` : ''
-        const msg = ev.message ? ` ${ev.message}` : ''
-        pushLine(`${ts}${ev.type}${msg}`)
-        if (ev.type === 'job_start') {
-          if (ev.data && ev.data.total_count) {
-            stream.totalCount = ev.data.total_count
+      const resp = await http.get(`/ai/jobs/${jobId}`)
+      const job = resp.data.job
+      if (!job) return
+
+      // 更新总数 (变式模式下)
+      if (stream.totalCount === 0 && job.total_count) {
+          stream.totalCount = job.total_count
+      }
+
+      const events = job.events || []
+      const newEvents = events.filter(e => (e.id || 0) > lastEventId)
+      newEvents.sort((a, b) => (a.id || 0) - (b.id || 0))
+
+      for (const ev of newEvents) {
+        lastEventId = ev.id || lastEventId
+        
+        if (ev.type === 'ai_delta') {
+          const t = ev?.data?.text || ''
+          stream.currentStage = '正在生成题目...'
+          enqueueOutput(t)
+        } else {
+          const ts = ev.ts ? `【${ev.ts}】` : ''
+          const msg = ev.message ? ` ${ev.message}` : ''
+          pushLine(`${ts}${ev.type}${msg}`)
+          
+          if (ev.type === 'job_start') {
+            if (ev.data && ev.data.total_count) {
+              stream.totalCount = ev.data.total_count
+            }
+          } else if (ev.type === 'job_done') {
+            stream.status = 'done'
+            stream.currentStage = '生成完成'
+            stream.progress = 100
+            stream.generatedCount = stream.totalCount
+            
+            stopStream()
+            fetchJobDetails(stream.job_id)
+            
+            setTimeout(() => {
+              stream.visible = false
+            }, 1500)
+          } else if (ev.type === 'job_error') {
+            stream.status = 'error'
+            stream.currentStage = '生成出错'
+            stopStream()
           }
-        } else if (ev.type === 'job_done') {
-          stream.status = 'done'
-          stream.currentStage = '生成完成'
-          stream.progress = 100
-          stream.generatedCount = stream.totalCount
-          stopStream()
-          fetchJobDetails(stream.job_id)
-          // 延迟1.5秒自动关闭窗口，给用户一点时间看到“完成”状态
-          setTimeout(() => {
-            stream.visible = false
-          }, 1500)
-        } else if (ev.type === 'job_error') {
-          stream.status = 'error'
-          stream.currentStage = '生成出错'
-          stopStream()
         }
       }
-    } catch {
-      pushLine(e.data || '')
-    }
-  }
+      
+      // 如果后端状态已经是 done/error，但前面还没处理到 job_done 事件（极端情况），也强制结束
+      if (job.status === 'done' && stream.status !== 'done') {
+          // 这里可以选择是否补发 job_done 逻辑，或者直接结束
+          // 为保险起见，如果轮询发现 done，且我们还没处理完事件，可以继续轮询直到事件处理完
+          // 或者直接认为完成了。
+          // 既然上面已经在处理 events，理论上最终会遇到 job_done。
+          // 除非 events 丢失。
+          // 作为一个兜底，如果 job.status 是 done 且 events 也没新的了，就强制完成
+          if (newEvents.length === 0) {
+              stream.status = 'done'
+              stream.currentStage = '生成完成'
+              stream.progress = 100
+              stopStream()
+              fetchJobDetails(stream.job_id)
+              setTimeout(() => { stream.visible = false }, 1500)
+          }
+      } else if (job.status === 'error' && stream.status !== 'error') {
+          if (newEvents.length === 0) {
+              stream.status = 'error'
+              stream.currentStage = '生成出错'
+              stopStream()
+          }
+      }
 
-  eventSource.onerror = () => {
-    if (stream.status === 'running') {
-      stream.visible = false
-      stopStream()
-      ElMessageBox.alert('连接中断，将继续在后台生成，完成后会弹窗提示', '提示', {
-        confirmButtonText: '知道了',
-        type: 'info'
-      })
-      startPolling(stream.job_id)
-    } else {
-      stopStream()
+    } catch (e) {
+      console.error(e)
     }
-  }
+  }, 1000)
 }
 
 function startPolling(jobId) {

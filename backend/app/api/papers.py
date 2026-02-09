@@ -6,6 +6,8 @@ import os
 import uuid
 from datetime import datetime
 
+from io import BytesIO
+import tempfile
 from flask import Blueprint, current_app, jsonify, request, send_file
 from sqlalchemy import and_, delete, func, insert, select, update, desc, distinct
 from sqlalchemy.exc import SQLAlchemyError
@@ -674,27 +676,18 @@ def export_word(paper_id: int):
 
         doc = _render_word(dict(p), questions, header, footer, include_answer, paper_size)
 
-        version_id = uuid.uuid4().hex
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"paper_{paper_id}_{ts}_{version_id}.docx"
-        path = os.path.join(_export_base_dir(paper_id), filename)
-        doc.save(path)
+        f = BytesIO()
+        doc.save(f)
+        f.seek(0)
+        
+        filename = f"{p['paper_name']}.docx"
+        try:
+            from urllib.parse import quote
+            filename = quote(filename)
+        except:
+            pass
 
-        # Record export history
-        history = _table("paper_export_history")
-        session.execute(
-            insert(history).values(
-                paper_id=paper_id,
-                version_id=version_id,
-                type="word",
-                filename=filename,
-                download_name=f"{p['paper_name']}.docx",
-                created_at=datetime.now()
-            )
-        )
-        session.commit()
-
-        return jsonify({"version_id": version_id, "filename": filename, "download_name": f"{p['paper_name']}.docx"})
+        return send_file(f, as_attachment=True, download_name=f"{p['paper_name']}.docx")
     except SQLAlchemyError as err:
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 
@@ -704,20 +697,62 @@ def export_pdf(paper_id: int):
     if docx2pdf_convert is None:
         return jsonify({"error": {"message": "PDF 导出不可用：docx2pdf 未安装或不可用", "type": "NotSupported"}}), 400
 
-    word_resp = export_word(paper_id)
-    if getattr(word_resp, "status_code", 200) != 200:
-        return word_resp
+    payload = request.get_json(silent=True) or {}
+    header = payload.get("header")
+    footer = payload.get("footer")
+    include_answer = bool(payload.get("include_answer", False))
+    paper_size = payload.get("paper_size", "A4")
 
-    data = word_resp.get_json()
-    version_id = data["version_id"]
-    word_path = os.path.join(_export_base_dir(paper_id), data["filename"])
-
-    pdf_version_id = uuid.uuid4().hex
-    pdf_filename = data["filename"].replace(".docx", ".pdf")
-    pdf_path = os.path.join(_export_base_dir(paper_id), pdf_filename)
+    session = get_session(current_app)
+    paper = _table("exam_paper")
+    rel = _table("paper_question_relation")
+    qb = _table("question_bank")
 
     try:
-        docx2pdf_convert(word_path, pdf_path)
-        return jsonify({"version_id": pdf_version_id, "filename": pdf_filename})
+        p = session.execute(select(paper).where(paper.c.paper_id == paper_id)).mappings().first()
+        if p is None:
+            return jsonify({"error": {"message": "试卷不存在", "type": "NotFound"}}), 404
+
+        q_stmt = (
+            select(
+                rel.c.question_sort,
+                rel.c.question_score,
+                qb.c.question_id,
+                qb.c.question_content,
+                qb.c.question_answer,
+                qb.c.question_analysis,
+            )
+            .join(qb, qb.c.question_id == rel.c.question_id)
+            .where(rel.c.paper_id == paper_id)
+            .order_by(rel.c.question_sort.asc())
+        )
+        questions = [dict(r) for r in session.execute(q_stmt).mappings().all()]
+
+        doc = _render_word(dict(p), questions, header, footer, include_answer, paper_size)
+
+        # Use temp files for conversion
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp_docx:
+            doc.save(tmp_docx.name)
+            tmp_docx_path = tmp_docx.name
+            
+        tmp_pdf_path = tmp_docx_path.replace(".docx", ".pdf")
+        
+        try:
+            docx2pdf_convert(tmp_docx_path, tmp_pdf_path)
+            
+            with open(tmp_pdf_path, "rb") as f:
+                pdf_data = f.read()
+                
+            return send_file(
+                BytesIO(pdf_data), 
+                as_attachment=True, 
+                download_name=f"{p['paper_name']}.pdf",
+                mimetype='application/pdf'
+            )
+        finally:
+            if os.path.exists(tmp_docx_path):
+                os.remove(tmp_docx_path)
+            if os.path.exists(tmp_pdf_path):
+                os.remove(tmp_pdf_path)
     except Exception as e:
         return jsonify({"error": {"message": f"PDF转换失败: {str(e)}", "type": "ConversionError"}}), 500

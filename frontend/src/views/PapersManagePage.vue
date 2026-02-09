@@ -134,7 +134,7 @@ async function loadPaperDetail(paperId) {
   paperForm.exam_duration = paper.value.exam_duration
   paperForm.is_closed_book = paper.value.is_closed_book
   paperForm.review_status = paper.value.review_status || 0 // Default to 0 (Pending)
-  await loadExports(paperId)
+  // await loadExports(paperId) // History disabled
   showPaperDrawer.value = true
   } catch (e) {
     error.value = e?.message || '加载失败'
@@ -206,15 +206,44 @@ async function removePaper(row) {
   }
 }
 
+function handleDownload(resp, defaultName) {
+    const blob = new Blob([resp.data], { type: resp.headers['content-type'] })
+    let downloadName = defaultName
+    const disposition = resp.headers['content-disposition']
+    if (disposition) {
+      if (disposition.includes('filename=')) {
+        downloadName = disposition.split('filename=')[1].split(';')[0].replace(/['"]/g, '')
+      }
+      if (disposition.includes("filename*=")) {
+         const match = disposition.match(/filename\*=UTF-8''(.+)/)
+         if (match && match[1]) {
+           try {
+             downloadName = decodeURIComponent(match[1])
+           } catch (e) {
+             console.warn('Decode filename failed', e)
+           }
+         }
+      }
+    }
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.style.display = 'none'
+    link.href = url
+    link.setAttribute('download', downloadName)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+}
+
 async function exportWord() {
   if (!selectedPaperId.value) return
   try {
     const resp = await http.post(`/papers/${selectedPaperId.value}/export/word`, {
       include_answer: false,
-    })
+    }, { responseType: 'blob' })
+    handleDownload(resp, (paper.value?.paper_name || 'paper') + '.docx')
     ElMessage.success('已导出Word')
-    await loadExports(selectedPaperId.value)
-    openDownload(selectedPaperId.value, resp.data.version_id)
   } catch (e) {
     ElMessage.error(e?.message || '导出失败')
   }
@@ -225,10 +254,9 @@ async function exportPdf() {
   try {
     const resp = await http.post(`/papers/${selectedPaperId.value}/export/pdf`, {
       include_answer: false,
-    })
+    }, { responseType: 'blob' })
+    handleDownload(resp, (paper.value?.paper_name || 'paper') + '.pdf')
     ElMessage.success('已导出PDF')
-    await loadExports(selectedPaperId.value)
-    openDownload(selectedPaperId.value, resp.data.version_id)
   } catch (e) {
     ElMessage.error(e?.message || '导出失败')
   }
