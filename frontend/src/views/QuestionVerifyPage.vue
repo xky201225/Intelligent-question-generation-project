@@ -35,6 +35,16 @@ const editDialog = reactive({
   },
 })
 
+const detailDialog = reactive({
+  visible: false,
+  item: null
+})
+
+function openDetail(row) {
+  detailDialog.item = row
+  detailDialog.visible = true
+}
+
 async function loadDicts() {
   const [s, t] = await Promise.all([
     http.get('/dicts/subjects'),
@@ -215,7 +225,7 @@ onMounted(async () => {
         <el-table-column prop="difficulty_name" label="难度" width="80" />
         <el-table-column label="题目内容">
           <template #default="{ row }">
-            <div class="content">{{ row.question_content }}</div>
+            <div class="contentCell" @click="openDetail(row)" title="点击查看详情">{{ row.question_content }}</div>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="240">
@@ -238,6 +248,25 @@ onMounted(async () => {
         />
       </div>
     </el-card>
+
+    <el-dialog v-model="detailDialog.visible" title="题目详情" width="600px">
+      <div v-if="detailDialog.item">
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="题干">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_content }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item label="答案">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_answer }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item label="解析">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_analysis }}</div>
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+      <template #footer>
+        <el-button @click="detailDialog.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="editDialog.visible" title="修改并通过" width="760px">
       <el-form label-width="90px">
@@ -301,13 +330,17 @@ onMounted(async () => {
   justify-content: space-between;
 }
 
-.content {
+.contentCell {
   max-height: 80px;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   white-space: pre-wrap;
+  cursor: pointer;
+}
+.contentCell:hover {
+  color: var(--el-color-primary);
 }
 
 .pager {

@@ -50,6 +50,15 @@ const rootSelectedChapters = computed(() => {
   return roots.sort((a, b) => a - b)
 })
 
+const totalWeight = computed(() => {
+  if (gen.chapter_ids.length === 0) return 0
+  let sum = 0
+  for (const cid of rootSelectedChapters.value) {
+    sum += (gen.chapter_weights[cid] || 0)
+  }
+  return sum
+})
+
 const gen = reactive({
   subject_id: null,
   textbook_id: null,
@@ -76,6 +85,16 @@ const generated = reactive({
   items: [],
   loading: false,
 })
+
+const detailDialog = reactive({
+  visible: false,
+  item: null
+})
+
+function openDetail(row) {
+  detailDialog.item = row
+  detailDialog.visible = true
+}
 
 const modifiedRows = reactive(new Set())
 const hasUnsavedChanges = computed(() => modifiedRows.size > 0)
@@ -236,6 +255,10 @@ async function generate() {
   // Common logic for weights (only if chapters selected)
   const finalWeights = {}
   if (gen.chapter_ids.length > 0) {
+    if (totalWeight.value !== 100) {
+      ElMessage.warning(`章节权重总和必须为 100%，当前为 ${totalWeight.value}%`)
+      return
+    }
     for (const cid of rootSelectedChapters.value) {
       if (gen.chapter_weights[cid] !== undefined) {
         finalWeights[cid] = gen.chapter_weights[cid]
@@ -829,7 +852,12 @@ onUnmounted(() => {
 
       <!-- 章节权重配置区域 (Common) -->
       <div v-if="gen.chapter_ids.length > 0 && activeTab === 'text'" class="config-list" style="margin-top: 16px">
-        <div class="config-header">章节权重设置</div>
+        <div class="config-header">
+          章节权重设置
+          <span :style="{ color: totalWeight === 100 ? '#67C23A' : '#F56C6C', fontSize: '14px', fontWeight: 'normal', marginLeft: '10px' }">
+            (当前总和: {{ totalWeight }}%)
+          </span>
+        </div>
         <div class="weight-grid">
           <div v-for="cid in rootSelectedChapters" :key="cid" class="weight-item">
             <span class="weight-label" :title="getChapterName(cid)">{{ getChapterName(cid) }}</span>
@@ -902,7 +930,7 @@ onUnmounted(() => {
         </el-table-column>
         <el-table-column label="题目内容">
           <template #default="{ row }">
-            <div class="content">{{ row.question_content }}</div>
+            <div class="contentCell" @click="openDetail(row)" title="点击查看详情">{{ row.question_content }}</div>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100">
@@ -914,6 +942,25 @@ onUnmounted(() => {
         </el-table-column>
       </el-table>
     </el-card>
+
+    <el-dialog v-model="detailDialog.visible" title="题目详情" width="600px">
+      <div v-if="detailDialog.item">
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="题干">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_content }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item label="答案">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_answer }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item label="解析">
+            <div style="white-space: pre-wrap">{{ detailDialog.item.question_analysis }}</div>
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+      <template #footer>
+        <el-button @click="detailDialog.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <div v-if="stream.visible" class="streamPanel">
       <div class="streamHeader">
@@ -1103,6 +1150,20 @@ onUnmounted(() => {
 .streamOutputTitle {
   font-weight: 700;
   margin-bottom: 6px;
+}
+
+.contentCell {
+  max-height: 80px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  white-space: pre-wrap;
+  cursor: pointer;
+}
+
+.contentCell:hover {
+  color: var(--el-color-primary);
 }
 
 .streamOutputPre {

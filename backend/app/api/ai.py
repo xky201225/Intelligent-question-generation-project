@@ -193,11 +193,11 @@ def _run_generation(app, job_id: str, subject_id: int, chapter_ids: list[int], r
                     
                     additional_reqs = ""
                     if type_id == 1: # 单选题
-                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须且只能有一个正确答案。\n"
+                        additional_reqs = "5) 必须有且只能有4个选项(A/B/C/D)。\n6) 必须且只能有一个正确答案。\n7) 【强制】题干末尾必须以中文括号（ ）结尾。\n"
                     elif type_id == 7: # 多选题
-                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须有两个或更多正确答案。\n"
+                        additional_reqs = "5) 必须有且只能有4个选项(A/B/C/D)。\n6) 必须有两个或更多正确答案。\n7) 【强制】题干末尾必须以中文括号（ ）结尾。\n"
                     elif type_id == 2: # 判断题
-                        additional_reqs = "5) 题干必须是陈述句。\n6) 答案必须是“正确”或“错误”（或T/F）。\n"
+                        additional_reqs = "5) 题干必须是陈述句。\n6) 答案必须是“正确”或“错误”（或T/F）。\n7) 【强制】题干末尾必须以中文括号（ ）结尾。\n"
                     elif type_id == 4: # 计算题
                         additional_reqs = "5) 必须是计算类题目，禁止出现选项(A/B/C/D)。\n6) 答案需包含具体计算结果。\n"
                     elif type_id == 3: # 填空题
@@ -347,7 +347,7 @@ def _run_generation(app, job_id: str, subject_id: int, chapter_ids: list[int], r
                             "question_content": it.get("question_content"),
                             "question_answer": it.get("question_answer"),
                             "question_analysis": it.get("question_analysis"),
-                            "question_score": it.get("question_score"),
+                            "question_score": it.get("question_score") if it.get("question_score") is not None else 0,
                             "is_ai_generated": 1,
                             "source_question_ids": ",".join(source_ids) if source_ids else None,
                             "review_status": 0,
@@ -485,9 +485,10 @@ def _run_variant_generation(app, job_id: str, subject_id: int, chapter_ids: list
                     "识别其中的题型、难度和出题风格，然后生成新的变式题目。\n"
                     "要求：\n"
                     "1. 严格输出 JSON 数组，不要包含 markdown 标记或额外文本。\n"
-                    "2. 题型必须映射到系统ID：1=单选, 2=判断, 3=填空, 4=计算, 5=简答, 6=作文, 7=多选。\n"
+                    "2. 题型必须映射到系统ID：1=单选, 2=判断, 3=填空, 4=计算, 5=简答, 6=作文, 7=多选。单选和多选有且必须只有ABCD四个选项\n"
                     "3. 题目内容应尽可能模仿【源材料】的风格。\n"
                     "4. JSON字段：type_id, question_content, question_answer, question_analysis, question_score (可选).\n"
+                    "5. 【强制格式】：判断题、单选题、多选题的题干末尾，必须以中文括号（ ）结尾，不得遗漏。\n"
                 )
 
                 user_prompt = (
@@ -563,7 +564,7 @@ def _run_variant_generation(app, job_id: str, subject_id: int, chapter_ids: list
                         "question_content": it["question_content"],
                         "question_answer": it["question_answer"],
                         "question_analysis": it["question_analysis"],
-                        "question_score": it.get("question_score"),
+                        "question_score": it.get("question_score") if it.get("question_score") is not None else 0,
                         "is_ai_generated": 1,
                         "review_status": 0,
                         "create_user": create_user,
@@ -1097,11 +1098,11 @@ def _run_generation_v2(app, job_id: str, subject_id: int, chapter_dist: dict[int
                     
                     additional_reqs = ""
                     if type_id == 1: # 单选题
-                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须且只能有一个正确答案。\n"
+                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须且只能有一个正确答案。\n7) 【强制】题干末尾必须以中文括号（ ）结尾。\n"
                     elif type_id == 7: # 多选题
-                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须有两个或更多正确答案。\n"
+                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须有两个或更多正确答案。\n7) 【强制】题干末尾必须以中文括号（ ）结尾。\n"
                     elif type_id == 2: # 判断题
-                        additional_reqs = "5) 题干必须是陈述句。\n6) 答案必须是“正确”或“错误”（或T/F）。\n"
+                        additional_reqs = "5) 题干必须是陈述句。\n6) 答案必须是“正确”或“错误”（或T/F）。\n7) 【强制】题干末尾必须以中文括号（ ）结尾。\n"
                     elif type_id == 4: # 计算题
                         additional_reqs = "5) 必须是计算类题目，禁止出现选项(A/B/C/D)。\n6) 答案需包含具体计算结果。\n"
                     elif type_id == 3: # 填空题
@@ -1251,7 +1252,7 @@ def _run_generation_v2(app, job_id: str, subject_id: int, chapter_dist: dict[int
                             "question_content": it.get("question_content"),
                             "question_answer": it.get("question_answer"),
                             "question_analysis": it.get("question_analysis"),
-                            "question_score": it.get("question_score"),
+                            "question_score": it.get("question_score") if it.get("question_score") is not None else 0,
                             "is_ai_generated": 1,
                             "source_question_ids": ",".join(source_ids) if source_ids else None,
                             "review_status": 0,

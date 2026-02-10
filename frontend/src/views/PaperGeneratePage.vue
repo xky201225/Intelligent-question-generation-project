@@ -314,7 +314,6 @@ onMounted(async () => {
               clearable
               multiple
               show-checkbox
-              check-strictly
               collapse-tags
               collapse-tags-tooltip
               placeholder="章节"
@@ -343,7 +342,11 @@ onMounted(async () => {
           <el-table :data="available.items" height="560" @selection-change="onAvailableSelectionChange">
             <el-table-column type="selection" width="48" />
             <el-table-column prop="question_id" label="ID" width="90" />
-            <el-table-column prop="chapter_id" label="章节ID" width="90" />
+            <el-table-column label="章节" width="150" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.chapter_name || row.chapter_id }}
+              </template>
+            </el-table-column>
             <el-table-column label="题型" width="110">
               <template #default="{ row }">
                 {{ typeName(row.type_id) }}

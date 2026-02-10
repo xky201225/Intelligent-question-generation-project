@@ -710,7 +710,6 @@ onMounted(async () => {
           node-key="chapter_id"
           multiple
           show-checkbox
-          check-strictly
           collapse-tags
           collapse-tags-tooltip
           clearable
