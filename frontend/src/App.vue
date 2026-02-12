@@ -54,7 +54,7 @@ onUnmounted(() => {
 
   <el-container v-else class="layout">
     <el-header class="header">
-      <div class="brand">智能组卷系统辛凯</div>
+      <div class="brand">智能组卷系统</div>
       <div class="right">
         <div v-if="user" class="user">
           <span class="userName">{{ user.name }}</span>
