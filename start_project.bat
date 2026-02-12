@@ -117,8 +117,8 @@ cd ..
 :OpenBrowser
 echo.
 echo [5/5] Launching...
-echo Waiting 5 seconds for services to initialize...
-timeout /t 5 >nul
+echo Waiting 1 seconds for services to initialize...
+timeout /t 1 >nul
 start http://localhost:5173
 
 echo.
