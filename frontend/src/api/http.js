@@ -2,7 +2,7 @@ import axios from 'axios'
 import { clearAuth, getToken } from '../auth'
 
 export const http = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://8.136.42.57:5000/api',
   timeout: 30000,
 })
 
