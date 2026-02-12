@@ -15,7 +15,7 @@ python -m pip install -r requirements.txt
 python run.py
 ```
 
-默认 API 地址：`http://localhost:5000/api`
+默认后端API地址（frontend/src/api/http.js）：`http://localhost:5000/api`
 
 ## 前端启动
 
