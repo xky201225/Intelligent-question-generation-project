@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Delete, Download, Check, FullScreen, View, Rank, Search } from '@element-plus/icons-vue'
 import { http } from '../api/http'
@@ -7,6 +8,9 @@ import { getUser } from '../auth'
 import ExportPreview from '../components/ExportPreview.vue'
 
 const loading = ref(false)
+const route = useRoute()
+const mode = computed(() => route.meta.mode || 'export') // 'export' or 'review'
+
 const error = ref('')
 const showPaperDrawer = ref(false)
 const isDrawerFullscreen = ref(false)
@@ -103,6 +107,14 @@ async function loadPapers() {
     if (filters.subject_id) params.subject_id = filters.subject_id
     if (filters.textbook_id) params.textbook_id = filters.textbook_id
     if (filters.publisher) params.publisher = filters.publisher
+    
+    // “试卷编辑/导出”只显示审核通过的模块 (mode='export')
+    // “试卷审核”只显示审核未通过的模块 (mode='review')
+    if (mode.value === 'export') {
+      params.review_status = 1
+    } else {
+      params.review_status = 0 // Pending
+    }
     
     const resp = await http.get('/papers', { params })
     papers.value = resp.data.items || []
@@ -383,13 +395,21 @@ onMounted(async () => {
   await loadTextbooks()
   await loadPapers()
 })
+
+watch(
+  () => route.path,
+  () => {
+    // Reload when route changes (e.g. from /papers to /paper-review)
+    loadPapers()
+  }
+)
 </script>
 
 <template>
   <div class="page">
     <el-alert v-if="error" :title="error" type="error" show-icon />
 
-      <el-card class="card" header="试卷列表">
+      <el-card class="card" :header="mode === 'export' ? '试卷列表' : '待审核试卷'">
         <template #header>
           <div class="header">
             <div class="filters">
@@ -476,9 +496,9 @@ onMounted(async () => {
       <el-drawer v-model="showPaperDrawer" :size="isDrawerFullscreen ? '100%' : '600px'" direction="rtl">
         <template #header>
           <div class="drawer-header-custom">
-            <span class="drawer-title">试卷编辑与导出</span>
+            <span class="drawer-title">{{ mode === 'export' ? '试卷编辑与导出' : '试卷审核' }}</span>
             <div class="header-actions">
-              <el-button :disabled="!selectedPaperId || paper?.review_status !== 1" @click="showPreview = true" :icon="View" size="small">导出预览</el-button>
+              <el-button v-if="mode === 'export'" :disabled="!selectedPaperId || paper?.review_status !== 1" @click="showPreview = true" :icon="View" size="small">导出预览</el-button>
               <el-button link @click="isDrawerFullscreen = !isDrawerFullscreen" :icon="FullScreen" title="切换全屏" />
             </div>
           </div>

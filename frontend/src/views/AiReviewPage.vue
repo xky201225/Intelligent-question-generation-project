@@ -1,6 +1,6 @@
 <script setup>
-import { onMounted, onUnmounted, reactive, ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, onUnmounted, reactive, ref, computed, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { VideoPlay, Plus, Delete, Close, Refresh } from '@element-plus/icons-vue'
 import { http } from '../api/http'
@@ -177,7 +177,9 @@ async function loadChapters() {
   chapterTree.value = resp.data.tree || []
 }
 
+const route = useRoute()
 const activeTab = ref('text')
+
 const papers = ref([])
 const sourcePaperId = ref(null)
 const uploadFile = ref(null)
@@ -204,6 +206,32 @@ async function loadPapers() {
   const resp = await http.get('/papers', { params })
   papers.value = resp.data.items || []
 }
+
+const pathToTab = {
+  '/ai-review/text': 'text',
+  '/ai-review/paper': 'paper',
+  '/ai-review/file': 'file'
+}
+
+watch(
+  () => route.path,
+  (newPath) => {
+    if (pathToTab[newPath]) {
+      activeTab.value = pathToTab[newPath]
+    }
+  },
+  { immediate: true }
+)
+
+watch(activeTab, (val) => {
+  const targetPath = `/ai-review/${val}`
+  if (route.path !== targetPath) {
+    router.push(targetPath)
+  }
+  if (val === 'paper' && papers.value.length === 0) {
+    loadPapers()
+  }
+})
 
 function handleFileChange(file) {
   const rawFile = file.raw

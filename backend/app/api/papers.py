@@ -344,6 +344,7 @@ def list_papers():
     reviewer = request.args.get("reviewer")
     author = request.args.get("author")
     publisher = request.args.get("publisher")
+    review_status = request.args.get("review_status", type=int)
 
     stmt = select(
         paper.c.paper_id,
@@ -362,6 +363,9 @@ def list_papers():
     
     if reviewer:
         stmt = stmt.where(paper.c.reviewer == reviewer)
+
+    if review_status is not None:
+        stmt = stmt.where(paper.c.review_status == review_status)
         
     if textbook_id is not None or author or publisher:
         pqr = _table("paper_question_relation")

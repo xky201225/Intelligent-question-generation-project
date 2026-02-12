@@ -2,7 +2,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { SwitchButton } from '@element-plus/icons-vue'
+import { SwitchButton, Edit, CopyDocument, Document, Check, Stamp } from '@element-plus/icons-vue'
 import { http } from './api/http'
 import { clearAuth, getUser } from './auth'
 
@@ -74,14 +74,28 @@ onUnmounted(() => {
             <el-icon><Collection /></el-icon>
             <span>基础信息</span>
           </el-menu-item>
-          <el-menu-item index="/ai-review">
-            <el-icon><MagicStick /></el-icon>
-            <span>AI出题</span>
-          </el-menu-item>
-          <el-menu-item index="/question-verify">
-            <el-icon><Check /></el-icon>
-            <span>题目校验</span>
-          </el-menu-item>
+          <el-sub-menu index="/ai-review">
+            <template #title>
+              <el-icon><MagicStick /></el-icon>
+              <span>AI出题</span>
+            </template>
+            <el-menu-item index="/ai-review/text">
+              <el-icon><Edit /></el-icon>
+              <span>AI出题</span>
+            </el-menu-item>
+            <el-menu-item index="/ai-review/paper">
+              <el-icon><CopyDocument /></el-icon>
+              <span>试卷变式</span>
+            </el-menu-item>
+            <el-menu-item index="/ai-review/file">
+              <el-icon><Document /></el-icon>
+              <span>文档变式</span>
+            </el-menu-item>
+            <el-menu-item index="/question-verify">
+              <el-icon><Check /></el-icon>
+              <span>题目校验</span>
+            </el-menu-item>
+          </el-sub-menu>
           <el-menu-item index="/textbooks">
             <el-icon><Notebook /></el-icon>
             <span>教材管理</span>
@@ -90,14 +104,24 @@ onUnmounted(() => {
             <el-icon><DocumentCopy /></el-icon>
             <span>题库管理</span>
           </el-menu-item>
-          <el-menu-item index="/paper-generate">
-            <el-icon><Cpu /></el-icon>
-            <span>智能组卷</span>
-          </el-menu-item>
-          <el-menu-item index="/papers">
-            <el-icon><Files /></el-icon>
-            <span>试卷管理</span>
-          </el-menu-item>
+          <el-sub-menu index="paper-management">
+            <template #title>
+              <el-icon><Files /></el-icon>
+              <span>试卷管理</span>
+            </template>
+            <el-menu-item index="/paper-generate">
+              <el-icon><Cpu /></el-icon>
+              <span>智能组卷</span>
+            </el-menu-item>
+            <el-menu-item index="/papers">
+              <el-icon><Edit /></el-icon>
+              <span>试卷编辑/导出</span>
+            </el-menu-item>
+            <el-menu-item index="/paper-review">
+              <el-icon><Stamp /></el-icon>
+              <span>试卷审核</span>
+            </el-menu-item>
+          </el-sub-menu>
           <el-menu-item index="/answer-sheets">
             <el-icon><Tickets /></el-icon>
             <span>答题卡</span>
@@ -181,10 +205,62 @@ onUnmounted(() => {
   border-right: 1px solid var(--el-border-color);
   height: 100%;
   overflow-y: auto;
+  background-color: var(--el-bg-color-page);
 }
 
 .menu {
   border-right: none;
+  background-color: transparent;
+  padding: 8px;
+}
+
+:deep(.el-menu-item),
+:deep(.el-sub-menu__title) {
+  border-radius: 8px;
+  margin-bottom: 4px;
+  height: 44px;
+  line-height: 44px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+:deep(.el-menu-item.is-active) {
+  background-color: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+
+:deep(.el-menu-item:hover),
+:deep(.el-sub-menu__title:hover) {
+  background-color: var(--el-fill-color);
+}
+
+/* Submenu container styling */
+:deep(.el-sub-menu .el-menu) {
+  background-color: var(--el-fill-color-lighter);
+  border-radius: 8px;
+  margin: 4px 8px 8px 8px; /* Indent the whole submenu block */
+  padding: 4px;
+}
+
+/* Submenu item specific styling */
+:deep(.el-sub-menu .el-menu-item) {
+  min-width: unset;
+  margin: 0 0 2px 0;
+  width: auto;
+  height: 36px;
+  line-height: 36px;
+  font-size: 13px; /* Smaller font size */
+  color: var(--el-text-color-regular);
+}
+
+:deep(.el-sub-menu .el-menu-item:hover) {
+  background-color: var(--el-fill-color-darker);
+}
+
+:deep(.el-sub-menu .el-menu-item.is-active) {
+  background-color: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
 }
 
 .main {
