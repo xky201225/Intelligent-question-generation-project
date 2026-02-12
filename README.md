@@ -1,6 +1,6 @@
 # 智能组卷系统 V3
 一定要查看项目说明！！！
-双击start_project.bat文件即可启动整个项目
+双击start_project.bat文件即可启动整个项目（部分情况需先安装好Vue和Node环境）
 ## 目录结构
 
 - backend/：Flask REST API（MySQL + AI + 导入导出）
