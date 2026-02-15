@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref, nextTick } from 'vue'
+import { onMounted, ref } from 'vue'
 import { Refresh, User, Document, Files, Reading } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { http } from '../api/http'
@@ -10,6 +10,9 @@ const error = ref('')
 const subjects = ref([])
 const questionTypes = ref([])
 const difficulties = ref([])
+
+// 检测深色模式
+const isDarkMode = ref(window.matchMedia('(prefers-color-scheme: dark)').matches)
 
 const stats = ref({
   users: 0,
@@ -49,14 +52,16 @@ function renderTrendChart(data) {
   if (!trendChartRef.value) return
   if (trendChart) trendChart.dispose()
   
-  trendChart = echarts.init(trendChartRef.value)
+  trendChart = echarts.init(trendChartRef.value, isDarkMode.value ? 'dark' : null)
+  const textColor = isDarkMode.value ? 'rgba(255,255,255,0.87)' : '#303133'
   const option = {
-    title: { text: '近30天系统活跃趋势', left: 'left', textStyle: { fontSize: 16 } },
+    backgroundColor: 'transparent',
+    title: { text: '近30天系统活跃趋势', left: 'left', textStyle: { fontSize: 16, color: textColor } },
     tooltip: { trigger: 'axis' },
-    legend: { data: ['题目新增', '试卷生成'], bottom: 0 },
+    legend: { data: ['题目新增', '试卷生成'], bottom: 0, textStyle: { color: textColor } },
     grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
-    xAxis: { type: 'category', boundaryGap: false, data: data.dates },
-    yAxis: { type: 'value' },
+    xAxis: { type: 'category', boundaryGap: false, data: data.dates, axisLabel: { color: textColor }, axisLine: { lineStyle: { color: isDarkMode.value ? '#4c4d4f' : '#ccc' } } },
+    yAxis: { type: 'value', axisLabel: { color: textColor }, axisLine: { lineStyle: { color: isDarkMode.value ? '#4c4d4f' : '#ccc' } }, splitLine: { lineStyle: { color: isDarkMode.value ? '#333' : '#eee' } } },
     series: [
       {
         name: '题目新增',
@@ -83,11 +88,13 @@ function renderPieChart(items) {
   if (!pieChartRef.value) return
   if (pieChart) pieChart.dispose()
   
-  pieChart = echarts.init(pieChartRef.value)
+  pieChart = echarts.init(pieChartRef.value, isDarkMode.value ? 'dark' : null)
+  const textColor = isDarkMode.value ? 'rgba(255,255,255,0.87)' : '#303133'
   const option = {
-    title: { text: '题库科目分布', left: 'left', textStyle: { fontSize: 16 } },
+    backgroundColor: 'transparent',
+    title: { text: '题库科目分布', left: 'left', textStyle: { fontSize: 16, color: textColor } },
     tooltip: { trigger: 'item' },
-    legend: { orient: 'vertical', left: 'right', top: 'center' },
+    legend: { orient: 'vertical', left: 'right', top: 'center', textStyle: { color: textColor } },
     series: [
       {
         name: '科目',
@@ -95,7 +102,7 @@ function renderPieChart(items) {
         radius: ['40%', '65%'],
         center: ['35%', '50%'],
         avoidLabelOverlap: false,
-        itemStyle: { borderRadius: 10, borderColor: '#fff', borderWidth: 2 },
+        itemStyle: { borderRadius: 10, borderColor: isDarkMode.value ? '#141414' : '#fff', borderWidth: 2 },
         label: { show: false, position: 'center' },
         emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold' } },
         labelLine: { show: false },
@@ -132,6 +139,13 @@ onMounted(() => {
     window.addEventListener('resize', () => {
         trendChart?.resize()
         pieChart?.resize()
+    })
+
+    // 监听系统深色模式变化
+    const darkModeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    darkModeMediaQuery.addEventListener('change', (e) => {
+        isDarkMode.value = e.matches
+        loadDashboard() // 重新加载图表以应用新主题
     })
 })
 </script>
@@ -245,7 +259,7 @@ onMounted(() => {
 }
 
 .stat-card {
-    background: #fff;
+    background: var(--el-bg-color);
     border-radius: 8px;
     padding: 20px;
     display: flex;
@@ -253,6 +267,7 @@ onMounted(() => {
     gap: 15px;
     box-shadow: 0 2px 12px 0 rgba(0,0,0,0.05);
     transition: transform 0.2s;
+    border: 1px solid var(--el-border-color-lighter);
 }
 
 .stat-card:hover {
@@ -282,19 +297,19 @@ onMounted(() => {
 
 .stat-label {
     font-size: 14px;
-    color: #909399;
+    color: var(--el-text-color-secondary);
     margin-bottom: 4px;
 }
 
 .stat-value {
     font-size: 24px;
     font-weight: bold;
-    color: #303133;
+    color: var(--el-text-color-primary);
 }
 
 .sub-text {
     font-size: 12px;
-    color: #909399;
+    color: var(--el-text-color-secondary);
     font-weight: normal;
 }
 

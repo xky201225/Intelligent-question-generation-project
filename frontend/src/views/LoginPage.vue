@@ -200,7 +200,7 @@ onUnmounted(() => {
 .login-page {
   min-height: 100vh;
   padding: 32px;
-  background: #f5f6f8;
+  background: var(--el-bg-color-page, #f5f6f8);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -208,7 +208,7 @@ onUnmounted(() => {
 }
 
 .hero {
-  background: #fff;
+  background: var(--el-bg-color, #fff);
   border-radius: 18px;
   padding: 22px;
   display: flex;
@@ -251,7 +251,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fafafa;
+  background: var(--el-fill-color-light, #fafafa);
   cursor: pointer;
   overflow: hidden;
 }
@@ -284,6 +284,12 @@ onUnmounted(() => {
   background: linear-gradient(120deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.6));
 }
 
+@media (prefers-color-scheme: dark) {
+  .right-mask {
+    background: linear-gradient(120deg, rgba(20, 20, 20, 0.92), rgba(20, 20, 20, 0.6));
+  }
+}
+
 .right-content {
   position: relative;
   z-index: 1;
@@ -301,13 +307,13 @@ onUnmounted(() => {
 .right-title {
   font-size: 18px;
   font-weight: 700;
-  color: #333;
+  color: var(--el-text-color-primary, #333);
 }
 
 .right-text {
   font-size: 14px;
   line-height: 1.7;
-  color: #555;
+  color: var(--el-text-color-regular, #555);
   min-height: 120px;
   white-space: pre-wrap;
 }
@@ -319,7 +325,7 @@ onUnmounted(() => {
 }
 
 .stat-card {
-  background: #fff;
+  background: var(--el-bg-color, #fff);
   border-radius: 14px;
   padding: 16px;
   box-shadow: var(--el-box-shadow-light);
@@ -338,7 +344,7 @@ onUnmounted(() => {
 .number {
   font-size: 22px;
   font-weight: 700;
-  color: #2f4b7c;
+  color: var(--el-color-primary, #2f4b7c);
 }
 
 .unit {
