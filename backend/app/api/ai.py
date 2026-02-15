@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
-from sqlalchemy import and_, insert, select, update, func
+from sqlalchemy import and_, insert, select, update, func, or_
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db import get_db, get_session
@@ -1415,6 +1415,225 @@ def list_pending():
         return jsonify({"items": [dict(r) for r in rows], "page": page, "page_size": page_size, "total": total})
     except SQLAlchemyError as err:
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
+
+
+@ai_bp.post("/generate-smart-paper")
+def generate_smart_paper():
+    payload = request.get_json(silent=True) or {}
+    subject_id = payload.get("subject_id")
+    textbook_id = payload.get("textbook_id")
+    description = payload.get("description")
+    create_user = payload.get("create_user") or "ai"
+
+    if not subject_id or not textbook_id or not description:
+        return jsonify({"error": {"message": "subject_id, textbook_id, description 必填", "type": "BadRequest"}}), 400
+
+    job_id = uuid.uuid4().hex
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "type": "smart_paper",
+            "create_user": create_user,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "seq": 0,
+            "events": [],
+        }
+    
+    app = current_app._get_current_object()
+    _executor.submit(_do_smart_paper_job, app, job_id, subject_id, textbook_id, description)
+
+    return jsonify({"job_id": job_id})
+
+def _do_smart_paper_job(app, job_id, subject_id, textbook_id, description):
+    with app.app_context():
+        try:
+            _job_update(job_id, {"status": "running", "started_at": datetime.now().isoformat(timespec="seconds")})
+            _job_event(job_id, "job_start", "开始智能组卷分析...")
+            session = get_session(app)
+            
+            # 1. Fetch Metadata
+            _job_event(job_id, "meta_fetch", "正在获取基础数据...")
+            
+            # Types
+            qtd = _table("question_type_dict")
+            types = session.execute(select(qtd.c.type_id, qtd.c.type_name)).all()
+            type_info = ", ".join([f"{t.type_name}(ID={t.type_id})" for t in types])
+
+            # Difficulties
+            qdd = _table("question_difficulty_dict")
+            diffs = session.execute(select(qdd.c.difficulty_id, qdd.c.difficulty_name)).all()
+            diff_info = ", ".join([f"{d.difficulty_name}(ID={d.difficulty_id})" for d in diffs])
+
+            # Chapters
+            ch = _table("textbook_chapter")
+            chapters = session.execute(select(ch.c.chapter_id, ch.c.chapter_name).where(ch.c.textbook_id == textbook_id)).all()
+            chapter_info = "\n".join([f"- {c.chapter_name} (ID={c.chapter_id})" for c in chapters])
+
+            # 2. AI Analysis
+            _job_event(job_id, "ai_analyze", "正在分析您的需求...")
+            client = get_deepseek_client()
+            
+            system_prompt = (
+                "你是一个专业的试卷生成助手。你的任务是根据用户的自然语言描述，分析出试卷的结构和题目要求。\\n"
+                "你需要返回一个严格的JSON对象，包含试卷的基本信息和题目列表。\\n"
+                "请严格按照以下JSON格式输出，不要输出任何Markdown标记或解释文字：\\n"
+                "{\\n"
+                "  \"paper_name\": \"试卷名称\",\\n"
+                "  \"exam_duration\": 120, // 考试时长(分钟)\\n"
+                "  \"is_closed_book\": true, // 是否闭卷\\n"
+                "  \"paper_desc\": \"试卷描述\",\\n"
+                "  \"sections\": [ // 试卷大题/部分\\n"
+                "    {\\n"
+                "      \"name\": \"一、选择题\", // 大题名称\\n"
+                "      \"type_id\": 1, // 题型ID\\n"
+                "      \"difficulty_id\": 1, // 难度ID (可选，如果用户指定了整体难度或该题型难度)\\n"
+                "      \"count\": 10, // 题目数量\\n"
+                "      \"score_per_question\": 2.0, // 每题分值\\n"
+                "      \"chapter_ids\": [1, 2], // 涉及章节ID列表 (可选，为空则从整本教材随机)\\n"
+                "      \"keywords\": [\"关键词1\"] // 关键词 (可选，用于模糊匹配题干)\\n"
+                "    }\\n"
+                "  ]\\n"
+                "}"
+            )
+
+            user_prompt = (
+                f"【环境信息】\\n"
+                f"可用题型：{type_info}\\n"
+                f"可用难度：{diff_info}\\n"
+                f"可用章节：\\n{chapter_info}\\n\\n"
+                f"【用户需求】\\n{description}\\n\\n"
+                f"请根据用户需求生成试卷结构JSON。"
+            )
+
+            _job_event(job_id, "ai_thinking", "AI正在思考组卷策略...")
+            
+            # Call AI
+            raw_response = ""
+            # Stream the AI response text to frontend for "thinking" effect
+            buf = ""
+            last_flush = time.time()
+            for chunk in client.chat_stream(system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.7):
+                raw_response += chunk
+                buf += chunk
+                now_ts = time.time()
+                if len(buf) >= 100 or "\\n" in buf or (now_ts - last_flush) >= 0.5:
+                    _job_event(job_id, "ai_delta", data={"text": buf})
+                    buf = ""
+                    last_flush = now_ts
+            
+            if buf:
+                _job_event(job_id, "ai_delta", data={"text": buf})
+
+            _job_event(job_id, "ai_parsed", "策略生成完成，正在解析...")
+            
+            plan = None
+            try:
+                # Try strict JSON parsing first
+                start = raw_response.find("{")
+                end = raw_response.rfind("}")
+                if start >= 0 and end >= 0:
+                     candidate = raw_response[start : end + 1]
+                     plan = json.loads(candidate)
+            except Exception:
+                pass
+            
+            if not plan:
+                 _job_event(job_id, "job_error", "AI未能生成有效的JSON策略")
+                 return
+
+            # 3. Execute Query & Assemble Paper
+            _job_event(job_id, "db_query", "正在根据策略抽取题目...")
+            
+            qb = _table("question_bank")
+            picked_questions = []
+            
+            total_score = 0
+            
+            # Pre-fetch all chapters if needed for filtering
+            all_chapter_ids = [c.chapter_id for c in chapters]
+
+            for section in plan.get("sections", []):
+                type_id = section.get("type_id")
+                diff_id = section.get("difficulty_id")
+                count = section.get("count", 0)
+                score = section.get("score_per_question", 0)
+                c_ids = section.get("chapter_ids", [])
+                keywords = section.get("keywords", [])
+                
+                if count <= 0:
+                    continue
+                
+                # Build Query
+                conditions = [
+                    qb.c.subject_id == subject_id,
+                    qb.c.type_id == type_id,
+                    qb.c.review_status == 1 # Only reviewed questions
+                ]
+                
+                if diff_id:
+                    conditions.append(qb.c.difficulty_id == diff_id)
+                
+                if c_ids:
+                    # Validate chapter IDs
+                    valid_cids = [cid for cid in c_ids if cid in all_chapter_ids]
+                    if valid_cids:
+                         conditions.append(qb.c.chapter_id.in_(valid_cids))
+                    else:
+                         conditions.append(qb.c.chapter_id.in_(all_chapter_ids))
+                else:
+                    conditions.append(qb.c.chapter_id.in_(all_chapter_ids))
+
+                if keywords:
+                    keyword_conditions = [qb.c.question_content.like(f"%{k}%") for k in keywords]
+                    if keyword_conditions:
+                        conditions.append(or_(*keyword_conditions))
+
+                stmt = select(
+                    qb.c.question_id, 
+                    qb.c.question_content, 
+                    qb.c.question_answer, 
+                    qb.c.question_analysis,
+                    qb.c.type_id,
+                    qb.c.difficulty_id,
+                    qb.c.chapter_id,
+                    qb.c.subject_id
+                ).where(and_(*conditions))
+                
+                # Randomize
+                stmt = stmt.order_by(func.random()).limit(count)
+                
+                rows = session.execute(stmt).mappings().all()
+                
+                for row in rows:
+                    q = dict(row)
+                    q["question_score"] = score # Override score based on plan
+                    # Add section info if useful
+                    picked_questions.append(q)
+                    total_score += score
+                
+                if len(rows) < count:
+                    _job_event(job_id, "warn", f"题型ID={type_id} 数量不足，需求{count}，实际找到{len(rows)}")
+
+            # 4. Finish
+            result = {
+                "paper_name": plan.get("paper_name", "AI生成试卷"),
+                "paper_desc": plan.get("paper_desc", ""),
+                "exam_duration": plan.get("exam_duration", 120),
+                "is_closed_book": plan.get("is_closed_book", False),
+                "questions": picked_questions
+            }
+            
+            _job_update(job_id, {"status": "done", "finished_at": datetime.now().isoformat(timespec="seconds"), "result": result})
+            _job_event(job_id, "job_done", f"组卷完成，共{len(picked_questions)}题", result)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            _job_update(job_id, {"status": "error", "error": str(e)})
+            _job_event(job_id, "job_error", str(e))
+        finally:
+             close_session()
 
 
 @ai_bp.post("/verify")

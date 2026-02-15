@@ -203,13 +203,14 @@ async function saveQuestions() {
   }
 }
 
-async function removePaper(row) {
+async function removePaper(row, event) {
+  if (event) event.stopPropagation()
   try {
     await ElMessageBox.confirm(`确认删除试卷：${row.paper_name}？`, '提示', { type: 'warning' })
     await http.delete(`/papers/${row.paper_id}`)
     if (selectedPaperId.value === row.paper_id) {
       selectedPaperId.value = null
-      await loadPaperDetail(null)
+      showPaperDrawer.value = false // Close drawer if deleted current
     }
     await loadPapers()
     ElMessage.success('已删除')
@@ -487,7 +488,7 @@ watch(
           </el-table-column>
           <el-table-column fixed="right" label="操作" width="100">
             <template #default="{ row }">
-              <el-button link type="danger" @click="removePaper(row)" :icon="Delete">删除</el-button>
+              <el-button link type="danger" @click="(e) => removePaper(row, e)" :icon="Delete">删除</el-button>
             </template>
           </el-table-column>
         </el-table>

@@ -1,8 +1,9 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Plus, Refresh, Delete, Check, FullScreen } from '@element-plus/icons-vue'
+import { Search, Plus, Refresh, Delete, Check, FullScreen, VideoPlay, Close } from '@element-plus/icons-vue'
 import { http } from '../api/http'
+import { getToken, getUser } from '../auth'
 
 const loading = ref(false)
 const error = ref('')
@@ -301,6 +302,235 @@ function scheduleDifficultyRecalc() {
   })
 }
 
+
+// AI Generation
+const aiDialog = reactive({
+  visible: false,
+  subject_id: null,
+  textbook_id: null,
+  description: '',
+})
+
+function openAiDialog() {
+  aiDialog.visible = true
+  aiDialog.subject_id = filters.subject_id || null
+  aiDialog.textbook_id = filters.textbook_id || null
+  aiDialog.description = ''
+  loadAiDialogTextbooks()
+}
+
+const aiDialogTextbooks = ref([])
+async function loadAiDialogTextbooks() {
+  const resp = await http.get('/textbooks', {
+    params: aiDialog.subject_id ? { subject_id: aiDialog.subject_id } : {},
+  })
+  aiDialogTextbooks.value = resp.data.items || []
+}
+
+async function startAiGeneration() {
+  if (!aiDialog.subject_id || !aiDialog.textbook_id || !aiDialog.description) {
+    ElMessage.error('请填写完整信息')
+    return
+  }
+  
+  aiDialog.visible = false
+  loading.value = true
+  try {
+    const user = getUser()
+    const resp = await http.post('/ai/generate-smart-paper', {
+      subject_id: aiDialog.subject_id,
+      textbook_id: aiDialog.textbook_id,
+      description: aiDialog.description,
+      create_user: user ? user.name : 'user'
+    })
+    startStream(resp.data.job_id)
+  } catch (e) {
+    ElMessage.error(e?.message || '请求失败')
+    loading.value = false
+  }
+}
+
+// Stream
+const stream = reactive({
+  visible: false,
+  job_id: null,
+  status: 'idle',
+  lines: [],
+  output: '',
+  progress: 0,
+  currentStage: '',
+})
+const streamBodyRef = ref(null)
+let typingTimer = null
+let pollingTimer = null
+let outputQueue = ''
+
+function pushLine(text) {
+  stream.lines.push(text)
+  if (stream.lines.length > 2000) stream.lines.splice(0, stream.lines.length - 2000)
+  requestAnimationFrame(() => {
+      if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight
+  })
+}
+
+function stopTyping() {
+  if (typingTimer) {
+    clearInterval(typingTimer)
+    typingTimer = null
+  }
+  outputQueue = ''
+}
+
+function enqueueOutput(text) {
+  if (!text) return
+  outputQueue += text
+  if (!typingTimer) {
+    typingTimer = setInterval(() => {
+      if (!outputQueue) {
+        clearInterval(typingTimer)
+        typingTimer = null
+        return
+      }
+      const chunk = outputQueue.slice(0, 5)
+      outputQueue = outputQueue.slice(5)
+      stream.output += chunk
+      requestAnimationFrame(() => {
+          if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight
+      })
+    }, 16)
+  }
+}
+
+function stopStream() {
+  if (pollingTimer) {
+    clearInterval(pollingTimer)
+    pollingTimer = null
+  }
+  stopTyping()
+  loading.value = false
+}
+
+function startStream(jobId) {
+  stopStream()
+  stream.visible = true
+  stream.job_id = jobId
+  stream.status = 'running'
+  stream.lines = []
+  stream.output = ''
+  stream.progress = 0
+  stream.currentStage = '准备中...'
+  
+  outputQueue = ''
+  pushLine(`任务已创建：${jobId}`)
+
+  let lastEventId = 0
+  
+  pollingTimer = setInterval(async () => {
+    try {
+      const resp = await http.get(`/ai/jobs/${jobId}`)
+      const job = resp.data.job
+      if (!job) return
+      
+      const events = job.events || []
+      const newEvents = events.filter(e => (e.id || 0) > lastEventId)
+      newEvents.sort((a, b) => (a.id || 0) - (b.id || 0))
+      
+      for (const ev of newEvents) {
+        lastEventId = ev.id || lastEventId
+        
+        if (ev.type === 'ai_delta') {
+          const t = ev?.data?.text || ''
+          stream.currentStage = 'AI思考中...'
+          enqueueOutput(t)
+          if (stream.progress < 80) {
+             stream.progress = Math.min(80, stream.progress + 0.5)
+          }
+        } else {
+          const ts = ev.ts ? `【${ev.ts}】` : ''
+          const msg = ev.message ? ` ${ev.message}` : ''
+          pushLine(`${ts}${ev.type}${msg}`)
+          
+          if (ev.message) stream.currentStage = ev.message
+
+          // Progress mapping
+          switch (ev.type) {
+            case 'job_start': stream.progress = 5; break;
+            case 'meta_fetch': stream.progress = 10; break;
+            case 'ai_analyze': stream.progress = 20; break;
+            case 'ai_thinking': stream.progress = 30; break;
+            case 'ai_parsed': stream.progress = 85; break;
+            case 'db_query': stream.progress = 90; break;
+          }
+          
+          if (ev.type === 'job_done') {
+            stream.status = 'done'
+            stream.currentStage = '完成'
+            stream.progress = 100
+            stopStream()
+            
+            const result = ev.data
+            if (result && result.questions) {
+                applyAiResult(result)
+            }
+            setTimeout(() => { stream.visible = false }, 2000)
+          } else if (ev.type === 'job_error') {
+            stream.status = 'error'
+            stream.currentStage = '出错'
+            stopStream()
+          }
+        }
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }, 1000)
+}
+
+function applyAiResult(result) {
+    if (result.paper_name) paper.paper_name = result.paper_name
+    if (result.paper_desc) paper.paper_desc = result.paper_desc
+    if (result.exam_duration) paper.exam_duration = result.exam_duration
+    if (result.is_closed_book !== undefined) paper.is_closed_book = result.is_closed_book
+    
+    // Sync filters
+    if (aiDialog.subject_id) {
+        filters.subject_id = aiDialog.subject_id
+        // Trigger load
+        loadTextbooks()
+        // If textbook also selected
+        if (aiDialog.textbook_id) {
+            filters.textbook_id = aiDialog.textbook_id
+            loadChapters()
+        }
+    }
+
+    picked.value = []
+    
+    const questions = result.questions || []
+    if (questions.length === 0) {
+        ElMessage.warning('未找到符合条件的题目')
+        return
+    }
+    
+    for (const q of questions) {
+        picked.value.push({
+          question_id: q.question_id,
+          question_sort: picked.value.length + 1,
+          question_score: q.question_score ?? 2,
+          question_content: q.question_content,
+          question_answer: q.question_answer,
+          question_analysis: q.question_analysis,
+          type_id: q.type_id,
+          difficulty_id: q.difficulty_id,
+          chapter_id: q.chapter_id,
+        })
+    }
+    
+    renumber()
+    showPaperDrawer.value = true
+    ElMessage.success(`AI组卷完成，共生成 ${questions.length} 题`)
+}
+
 onMounted(async () => {
   await loadDicts()
   await loadTextbooks()
@@ -352,6 +582,7 @@ watch(() => filters.difficulty_ids.length, () => scheduleDifficultyRecalc(), { f
             <div class="header">
               <div>题目筛选</div>
               <div class="actions">
+                <el-button @click="openAiDialog" :icon="VideoPlay" type="warning" plain>AI智能组卷</el-button>
                 <el-button :loading="loading" @click="search" :icon="Search">查询</el-button>
                 <el-button type="primary" :loading="loading" @click="addSelected" :icon="Plus">加入试卷</el-button>
                 <el-button @click="showPaperDrawer = true">已选 ({{ picked.length }})</el-button>
@@ -597,6 +828,86 @@ watch(() => filters.difficulty_ids.length, () => scheduleDifficultyRecalc(), { f
         </div>
       </template>
     </el-drawer>
+    <el-dialog v-model="aiDialog.visible" title="AI智能组卷" width="500px">
+      <el-form label-width="80px">
+        <el-form-item label="科目">
+          <el-select
+            v-model="aiDialog.subject_id"
+            placeholder="请选择科目"
+            style="width: 100%"
+            :disabled="!!filters.subject_id"
+            @change="
+              async () => {
+                aiDialog.textbook_id = null
+                await loadAiDialogTextbooks()
+              }
+            "
+          >
+            <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="教材">
+          <el-select
+            v-model="aiDialog.textbook_id"
+            placeholder="请选择教材"
+            style="width: 100%"
+            :disabled="!aiDialog.subject_id || !!filters.textbook_id"
+          >
+            <el-option v-for="t in aiDialogTextbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? '-' + t.author : '')" :value="t.textbook_id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="需求描述">
+            <el-input 
+                v-model="aiDialog.description" 
+                type="textarea" 
+                :rows="6" 
+                placeholder="请描述您的组卷需求，例如：&#10;生成一份高等数学期末试卷，包含10道单选题（每题2分），5道填空题（每题4分），2道计算题（每题10分）。难度中等偏难，重点考察微积分和极限。" 
+            />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="aiDialog.visible = false">取消</el-button>
+        <el-button type="primary" @click="startAiGeneration" :loading="loading">开始生成</el-button>
+      </template>
+    </el-dialog>
+
+    <div v-if="stream.visible" class="streamPanel">
+      <div class="streamHeader">
+        <div class="streamTitle">
+          <span>AI组卷过程</span>
+          <span class="streamMeta">ID: {{ stream.job_id }}（{{ stream.status }}）</span>
+        </div>
+        <div class="streamActions">
+          <el-button size="small" @click="stream.output = ''; stream.lines = []" :icon="Delete">清空</el-button>
+          <el-button size="small" @click="stream.visible = false" :icon="Close">关闭</el-button>
+        </div>
+      </div>
+
+      <div class="streamProgress">
+        <div class="progress-info">
+          <span class="stage-text">{{ stream.currentStage }}</span>
+        </div>
+        <el-progress 
+          :percentage="stream.progress" 
+          :stroke-width="8" 
+          striped 
+          striped-flow 
+          :duration="10"
+        />
+      </div>
+
+      <div ref="streamBodyRef" class="streamBody">
+        <div v-if="stream.lines.length > 0" class="streamLines">
+          <div v-for="(l, i) in stream.lines" :key="i">{{ l }}</div>
+        </div>
+        <div v-else class="streamHint">等待事件流…</div>
+
+        <div v-if="stream.output" class="streamOutput">
+          <div class="streamOutputTitle">模型输出（实时）</div>
+          <pre class="streamOutputPre">{{ stream.output }}</pre>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -824,5 +1135,97 @@ watch(() => filters.difficulty_ids.length, () => scheduleDifficultyRecalc(), { f
   font-size: 18px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+.streamPanel {
+  position: fixed;
+  right: 18px;
+  top: 86px;
+  width: 520px;
+  height: 70vh;
+  background-color: var(--el-bg-color);
+  border: 1px solid var(--el-border-color);
+  border-radius: 10px;
+  box-shadow: var(--el-box-shadow);
+  display: flex;
+  flex-direction: column;
+  z-index: 2000;
+}
+
+.streamHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--el-border-color);
+}
+
+.streamTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.streamMeta {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.streamActions {
+  display: flex;
+  gap: 8px;
+}
+
+.streamProgress {
+  padding: 10px 12px;
+  background-color: var(--el-bg-color-page);
+  border-bottom: 1px solid var(--el-border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.stage-text {
+  font-weight: 500;
+  color: var(--el-color-primary);
+}
+
+.streamBody {
+  padding: 10px 12px;
+  overflow: auto;
+  flex: 1;
+}
+
+.streamLines {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--el-text-color-regular);
+  margin-bottom: 12px;
+}
+
+.streamHint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.streamOutputTitle {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.streamOutputPre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--el-text-color-regular);
 }
 </style>
