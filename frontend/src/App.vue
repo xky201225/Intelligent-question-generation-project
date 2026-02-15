@@ -1,4 +1,3 @@
-
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -77,7 +76,7 @@ onUnmounted(() => {
           <el-sub-menu index="/ai-review">
             <template #title>
               <el-icon><MagicStick /></el-icon>
-              <span>AI出题</span>
+              <span>智能出题</span>
             </template>
             <el-menu-item index="/ai-review/text">
               <el-icon><Edit /></el-icon>
@@ -140,6 +139,7 @@ onUnmounted(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  background-color: var(--el-bg-color);
 }
 
 .header {
@@ -148,6 +148,7 @@ onUnmounted(() => {
   justify-content: space-between;
   border-bottom: 1px solid var(--el-border-color);
   height: 60px;
+  background-color: var(--el-bg-color);
 }
 
 .brand {
@@ -230,6 +231,17 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+@media (prefers-color-scheme: dark) {
+  :deep(.el-menu-item.is-active),
+  :deep(.el-sub-menu .el-menu-item.is-active) {
+    background-color: rgba(64, 158, 255, 0.15) !important;
+  }
+
+  :deep(.el-sub-menu .el-menu) {
+    background-color: rgba(255, 255, 255, 0.04) !important;
+  }
+}
+
 :deep(.el-menu-item:hover),
 :deep(.el-sub-menu__title:hover) {
   background-color: var(--el-fill-color);
@@ -267,5 +279,6 @@ onUnmounted(() => {
   padding: 16px;
   flex: 1;
   overflow-y: auto;
+  background-color: var(--el-bg-color-page);
 }
 </style>

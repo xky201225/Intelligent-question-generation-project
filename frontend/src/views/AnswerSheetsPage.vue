@@ -672,7 +672,7 @@ onMounted(async () => {
               </el-form>
             </div>
             <div style="width: 300px; border-left: 1px solid #eee; padding-left: 20px;">
-              <div style="margin-bottom: 10px; font-weight: bold; color: #666;">样式预览</div>
+              <div style="margin-bottom: 10px; font-weight: bold; color: var(--el-text-color-secondary);">样式预览</div>
               <StylePreview :config="previewConfig" />
             </div>
           </div>
@@ -794,7 +794,7 @@ onMounted(async () => {
                     <el-radio-button label="A3">A3 (双栏)</el-radio-button>
                 </el-radio-group>
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="font-size: 14px; color: #606266;">准考证号位数：</span>
+                    <span style="font-size: 14px; color: var(--el-text-color-regular);">准考证号位数：</span>
                     <el-input-number v-model="previewDialog.ticketNoDigits" :min="4" :max="12" size="small" style="width: 100px" />
                 </div>
             </div>
@@ -899,8 +899,8 @@ onMounted(async () => {
 
     <el-dialog v-model="aiSheetDialog.visible" title="AI 智能生成答题卡" width="800px">
       <div v-loading="aiSheetDialog.loading" style="min-height: 300px;">
-        <div v-if="aiSheetDialog.htmlContent" class="ai-preview" v-html="aiSheetDialog.htmlContent" style="padding: 20px; border: 1px solid #ddd; background: #fff;"></div>
-        <div v-else-if="!aiSheetDialog.loading" style="text-align: center; color: #999; margin-top: 100px;">
+        <div v-if="aiSheetDialog.htmlContent" class="ai-preview" v-html="aiSheetDialog.htmlContent"></div>
+        <div v-else-if="!aiSheetDialog.loading" style="text-align: center; color: var(--el-text-color-secondary); margin-top: 100px;">
           AI正在思考排版...
         </div>
       </div>
@@ -927,6 +927,8 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  background-color: var(--el-bg-color);
+  color: var(--el-text-color-primary);
 }
 
 .toolbar {
@@ -963,11 +965,12 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   padding: 10px 20px;
-  background-color: #fff;
-  border-bottom: 1px solid #dcdfe6;
+  background-color: var(--el-bg-color);
+  border-bottom: 1px solid var(--el-border-color);
   position: sticky;
   top: 0;
   z-index: 100;
+  color: var(--el-text-color-primary);
 }
 
 .sheet-preview-container {
@@ -984,6 +987,7 @@ onMounted(async () => {
 
 .sheet-paper {
   background: #fff;
+  color: #000;
   /* width is set by inline style */
   min-height: 297mm; /* Fixed height for page simulation */
   padding: 25.4mm;
@@ -1127,7 +1131,7 @@ onMounted(async () => {
 .sheet-footer {
     text-align: center;
     font-size: 12px;
-    color: #666;
+    color: #333;
     margin-top: 10px;
     position: absolute;
     bottom: 10mm;
@@ -1173,6 +1177,14 @@ onMounted(async () => {
 [contenteditable="true"]:hover {
   outline: 1px dashed #999;
   cursor: text;
+}
+
+.ai-preview {
+  padding: 20px;
+  border: 1px solid var(--el-border-color);
+  background: var(--el-bg-color);
+  border-radius: 4px;
+  color: var(--el-text-color-primary);
 }
 </style>
 

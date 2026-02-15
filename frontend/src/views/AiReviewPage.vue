@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, reactive, ref, computed, watch } from 'vue'
+import { onMounted, onUnmounted, reactive, ref, computed, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { VideoPlay, Plus, Delete, Close, Refresh } from '@element-plus/icons-vue'
@@ -666,16 +666,15 @@ function getChapterName(cid) {
   return find(chapters.value) || `章节${cid}`
 }
 
-// 递归获取所有子章节 ID
-function getAllSubChapterIds(nodes) {
-  let ids = []
-  for (const node of nodes) {
-    ids.push(node.chapter_id)
-    if (node.children && node.children.length > 0) {
-      ids = ids.concat(getAllSubChapterIds(node.children))
-    }
-  }
-  return ids
+function distributeChapterWeights() {
+  const roots = rootSelectedChapters.value
+  const count = roots.length
+  if (count === 0) return
+  const base = Math.floor(100 / count)
+  const remainder = 100 % count
+  roots.forEach((cid, index) => {
+    gen.chapter_weights[cid] = base + (index < remainder ? 1 : 0)
+  })
 }
 
 function handleChapterChange(val) {
@@ -698,21 +697,94 @@ function handleChapterChange(val) {
       gen.chapter_weights[cid] = 10
     }
   })
+
+  distributeChapterWeights()
+}
+
+const chapterSelectRef = ref(null)
+const typeSelectRef = ref(null)
+const maxChapterTags = ref(1)
+const maxTypeTags = ref(1)
+let chapterResizeObserver = null
+let typeResizeObserver = null
+let chapterRecalcRaf = 0
+let typeRecalcRaf = 0
+
+function getTagsContainer(host) {
+  if (!host) return null
+  return host.querySelector('.el-select__tags') || host.querySelector('.el-select__selection') || host.querySelector('.el-select__wrapper')
+}
+
+async function recalcMaxTags(selectRef, maxRef, selectedLength) {
+  if (!selectRef.value) return
+  const targetLength = Math.max(1, selectedLength || 0)
+  if (maxRef.value !== targetLength) {
+    maxRef.value = targetLength
+    await nextTick()
+  }
+  const host = selectRef.value?.$el || selectRef.value
+  const tagsContainer = getTagsContainer(host)
+  if (!tagsContainer) return
+  const tags = Array.from(tagsContainer.querySelectorAll('.el-tag'))
+  if (tags.length === 0) return
+  const firstTop = tags[0].getBoundingClientRect().top
+  const fitCount = tags.filter(tag => Math.abs(tag.getBoundingClientRect().top - firstTop) < 1).length
+  const nextMax = Math.max(1, Math.min(fitCount, tags.length))
+  if (maxRef.value !== nextMax) {
+    maxRef.value = nextMax
+  }
+}
+
+function scheduleChapterRecalc() {
+  if (chapterRecalcRaf) cancelAnimationFrame(chapterRecalcRaf)
+  chapterRecalcRaf = requestAnimationFrame(() => {
+    recalcMaxTags(chapterSelectRef, maxChapterTags, gen.chapter_ids.length)
+  })
+}
+
+function scheduleTypeRecalc() {
+  if (typeRecalcRaf) cancelAnimationFrame(typeRecalcRaf)
+  typeRecalcRaf = requestAnimationFrame(() => {
+    recalcMaxTags(typeSelectRef, maxTypeTags, gen.type_ids.length)
+  })
 }
 
 onMounted(async () => {
   await loadDicts()
   await loadTextbooks()
   await loadReviewers()
+  await nextTick()
+  scheduleChapterRecalc()
+  scheduleTypeRecalc()
+
+  if (window.ResizeObserver) {
+    const chapterHost = chapterSelectRef.value?.$el || chapterSelectRef.value
+    const typeHost = typeSelectRef.value?.$el || typeSelectRef.value
+    if (chapterHost) {
+      chapterResizeObserver = new ResizeObserver(() => scheduleChapterRecalc())
+      chapterResizeObserver.observe(chapterHost)
+    }
+    if (typeHost) {
+      typeResizeObserver = new ResizeObserver(() => scheduleTypeRecalc())
+      typeResizeObserver.observe(typeHost)
+    }
+  }
 })
 
 onUnmounted(() => {
+  if (chapterResizeObserver) chapterResizeObserver.disconnect()
+  if (typeResizeObserver) typeResizeObserver.disconnect()
+  if (chapterRecalcRaf) cancelAnimationFrame(chapterRecalcRaf)
+  if (typeRecalcRaf) cancelAnimationFrame(typeRecalcRaf)
   stopStream()
   if (pollingTimer) {
     clearInterval(pollingTimer)
     pollingTimer = null
   }
 })
+
+watch(() => gen.chapter_ids.length, () => scheduleChapterRecalc(), { flush: 'post' })
+watch(() => gen.type_ids.length, () => scheduleTypeRecalc(), { flush: 'post' })
 </script>
 
 <template>
@@ -720,7 +792,7 @@ onUnmounted(() => {
     <el-card>
       <template #header>
         <div class="header">
-          <div>AI 出题</div>
+          <div>AI出题</div>
           <el-button type="primary" :loading="loading" @click="generate" :icon="VideoPlay">生成</el-button>
         </div>
       </template>
@@ -764,6 +836,7 @@ onUnmounted(() => {
 
         <div v-if="activeTab === 'text'" @click="handleChapterWrapperClick" class="chapter-select-wrapper">
           <el-tree-select
+            ref="chapterSelectRef"
             v-model="gen.chapter_ids"
             :data="chapterTree"
             :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
@@ -771,6 +844,7 @@ onUnmounted(() => {
             multiple
             show-checkbox
             collapse-tags
+            :max-collapse-tags="maxChapterTags"
             collapse-tags-tooltip
             clearable
             placeholder="章节（多选）"
@@ -782,12 +856,14 @@ onUnmounted(() => {
       </div>
 
       <el-tabs v-model="activeTab" type="border-card" style="margin-top: 16px" @tab-click="() => { if(activeTab === 'paper' && papers.length === 0) loadPapers() }">
-        <el-tab-pane label="AI 出题" name="text">
+        <el-tab-pane label="AI出题" name="text">
           <div class="formRow">
             <el-select
+              ref="typeSelectRef"
               v-model="gen.type_ids"
               multiple
               collapse-tags
+              :max-collapse-tags="maxTypeTags"
               collapse-tags-tooltip
               clearable
               placeholder="选择题型（多选）"
@@ -885,6 +961,7 @@ onUnmounted(() => {
           <span :style="{ color: totalWeight === 100 ? '#67C23A' : '#F56C6C', fontSize: '14px', fontWeight: 'normal', marginLeft: '10px' }">
             (当前总和: {{ totalWeight }}%)
           </span>
+          <el-button size="small" style="margin-left: 8px" @click="distributeChapterWeights">平均分配</el-button>
         </div>
         <div class="weight-grid">
           <div v-for="cid in rootSelectedChapters" :key="cid" class="weight-item">
@@ -1232,3 +1309,4 @@ onUnmounted(() => {
   }
 }
 </style>
+

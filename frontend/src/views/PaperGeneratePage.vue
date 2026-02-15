@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Plus, Refresh, Delete, Check, FullScreen } from '@element-plus/icons-vue'
 import { http } from '../api/http'
@@ -52,6 +52,19 @@ const detailDialog = reactive({
   visible: false,
   item: null
 })
+
+const chapterSelectRef = ref(null)
+const typeSelectRef = ref(null)
+const difficultySelectRef = ref(null)
+const maxChapterTags = ref(1)
+const maxTypeTags = ref(1)
+const maxDifficultyTags = ref(1)
+let chapterResizeObserver = null
+let typeResizeObserver = null
+let difficultyResizeObserver = null
+let chapterRecalcRaf = 0
+let typeRecalcRaf = 0
+let difficultyRecalcRaf = 0
 
 function openDetail(row) {
   detailDialog.item = row
@@ -242,11 +255,92 @@ async function savePaper() {
   }
 }
 
+function getTagsContainer(host) {
+  if (!host) return null
+  return host.querySelector('.el-select__tags') || host.querySelector('.el-select__selection') || host.querySelector('.el-select__wrapper')
+}
+
+async function recalcMaxTags(selectRef, maxRef, selectedLength) {
+  if (!selectRef.value) return
+  const targetLength = Math.max(1, selectedLength || 0)
+  if (maxRef.value !== targetLength) {
+    maxRef.value = targetLength
+    await nextTick()
+  }
+  const host = selectRef.value?.$el || selectRef.value
+  const tagsContainer = getTagsContainer(host)
+  if (!tagsContainer) return
+  const tags = Array.from(tagsContainer.querySelectorAll('.el-tag'))
+  if (tags.length === 0) return
+  const firstTop = tags[0].getBoundingClientRect().top
+  const fitCount = tags.filter(tag => Math.abs(tag.getBoundingClientRect().top - firstTop) < 1).length
+  const nextMax = Math.max(1, Math.min(fitCount, tags.length))
+  if (maxRef.value !== nextMax) {
+    maxRef.value = nextMax
+  }
+}
+
+function scheduleChapterRecalc() {
+  if (chapterRecalcRaf) cancelAnimationFrame(chapterRecalcRaf)
+  chapterRecalcRaf = requestAnimationFrame(() => {
+    recalcMaxTags(chapterSelectRef, maxChapterTags, filters.chapter_ids.length)
+  })
+}
+
+function scheduleTypeRecalc() {
+  if (typeRecalcRaf) cancelAnimationFrame(typeRecalcRaf)
+  typeRecalcRaf = requestAnimationFrame(() => {
+    recalcMaxTags(typeSelectRef, maxTypeTags, filters.type_ids.length)
+  })
+}
+
+function scheduleDifficultyRecalc() {
+  if (difficultyRecalcRaf) cancelAnimationFrame(difficultyRecalcRaf)
+  difficultyRecalcRaf = requestAnimationFrame(() => {
+    recalcMaxTags(difficultySelectRef, maxDifficultyTags, filters.difficulty_ids.length)
+  })
+}
+
 onMounted(async () => {
   await loadDicts()
   await loadTextbooks()
   await search()
+  await nextTick()
+  scheduleChapterRecalc()
+  scheduleTypeRecalc()
+  scheduleDifficultyRecalc()
+
+  if (window.ResizeObserver) {
+    const chapterHost = chapterSelectRef.value?.$el || chapterSelectRef.value
+    const typeHost = typeSelectRef.value?.$el || typeSelectRef.value
+    const difficultyHost = difficultySelectRef.value?.$el || difficultySelectRef.value
+    if (chapterHost) {
+      chapterResizeObserver = new ResizeObserver(() => scheduleChapterRecalc())
+      chapterResizeObserver.observe(chapterHost)
+    }
+    if (typeHost) {
+      typeResizeObserver = new ResizeObserver(() => scheduleTypeRecalc())
+      typeResizeObserver.observe(typeHost)
+    }
+    if (difficultyHost) {
+      difficultyResizeObserver = new ResizeObserver(() => scheduleDifficultyRecalc())
+      difficultyResizeObserver.observe(difficultyHost)
+    }
+  }
 })
+
+onUnmounted(() => {
+  if (chapterResizeObserver) chapterResizeObserver.disconnect()
+  if (typeResizeObserver) typeResizeObserver.disconnect()
+  if (difficultyResizeObserver) difficultyResizeObserver.disconnect()
+  if (chapterRecalcRaf) cancelAnimationFrame(chapterRecalcRaf)
+  if (typeRecalcRaf) cancelAnimationFrame(typeRecalcRaf)
+  if (difficultyRecalcRaf) cancelAnimationFrame(difficultyRecalcRaf)
+})
+
+watch(() => filters.chapter_ids.length, () => scheduleChapterRecalc(), { flush: 'post' })
+watch(() => filters.type_ids.length, () => scheduleTypeRecalc(), { flush: 'post' })
+watch(() => filters.difficulty_ids.length, () => scheduleDifficultyRecalc(), { flush: 'post' })
 </script>
 
 <template>
@@ -307,6 +401,7 @@ onMounted(async () => {
             </el-select>
 
             <el-tree-select
+              ref="chapterSelectRef"
               v-model="filters.chapter_ids"
               :data="chapterTree"
               :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
@@ -315,26 +410,29 @@ onMounted(async () => {
               multiple
               show-checkbox
               collapse-tags
+              :max-collapse-tags="maxChapterTags"
               collapse-tags-tooltip
               placeholder="章节"
               style="width: 240px"
               @change="search"
             />
 
-            <el-select v-model="filters.type_ids" clearable multiple collapse-tags collapse-tags-tooltip placeholder="题型" style="width: 200px" @change="search">
+            <el-select ref="typeSelectRef" v-model="filters.type_ids" clearable multiple collapse-tags :max-collapse-tags="maxTypeTags" collapse-tags-tooltip placeholder="题型" style="width: 200px" @change="search">
               <el-option v-for="t in types" :key="t.type_id" :label="t.type_name" :value="t.type_id" />
             </el-select>
 
             <el-select
-              v-model="filters.difficulty_ids"
-              clearable
-              multiple
-              collapse-tags
-              collapse-tags-tooltip
-              placeholder="难度"
-              style="width: 200px"
-              @change="search"
-            >
+              ref="difficultySelectRef"
+               v-model="filters.difficulty_ids"
+               clearable
+               multiple
+               collapse-tags
+               :max-collapse-tags="maxDifficultyTags"
+               collapse-tags-tooltip
+               placeholder="难度"
+               style="width: 200px"
+               @change="search"
+             >
               <el-option v-for="d in difficulties" :key="d.difficulty_id" :label="d.difficulty_name" :value="d.difficulty_id" />
             </el-select>
           </div>
