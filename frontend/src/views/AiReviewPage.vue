@@ -1208,11 +1208,27 @@ onUnmounted(() => {
   justify-content: center;
   align-items: center;
   min-height: 400px;
-  font-size: 60px;
+  font-size: 80px;
   font-weight: bold;
-  color: var(--el-color-primary);
-  opacity: 0.6;
+  color: #A0CFFF;
+  font-family: "YouYuan", "Mv Boli", "Comic Sans MS", "Hanyi", "Microsoft YaHei", sans-serif;
+  opacity: 0.9;
   user-select: none;
   pointer-events: none;
+  letter-spacing: 8px;
+  text-shadow: 3px 3px 6px rgba(160, 207, 255, 0.4);
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-15px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
 }
 </style>
