@@ -652,6 +652,7 @@ def export_word(paper_id: int):
     footer = payload.get("footer")
     include_answer = bool(payload.get("include_answer", False))
     paper_size = payload.get("paper_size", "A4") # A4 or A3
+    payload_questions = payload.get("questions")
 
     session = get_session(current_app)
     paper = _table("exam_paper")
@@ -677,6 +678,21 @@ def export_word(paper_id: int):
             .order_by(rel.c.question_sort.asc())
         )
         questions = [dict(r) for r in session.execute(q_stmt).mappings().all()]
+        if isinstance(payload_questions, list) and payload_questions:
+            normalized = []
+            for idx, q in enumerate(payload_questions):
+                if not isinstance(q, dict):
+                    continue
+                normalized.append({
+                    "question_sort": q.get("question_sort") or idx + 1,
+                    "question_score": q.get("question_score"),
+                    "question_id": q.get("question_id"),
+                    "question_content": q.get("question_content") or "",
+                    "question_answer": q.get("question_answer") or "",
+                    "question_analysis": q.get("question_analysis") or ""
+                })
+            if normalized:
+                questions = normalized
 
         doc = _render_word(dict(p), questions, header, footer, include_answer, paper_size)
 
@@ -706,6 +722,7 @@ def export_pdf(paper_id: int):
     footer = payload.get("footer")
     include_answer = bool(payload.get("include_answer", False))
     paper_size = payload.get("paper_size", "A4")
+    payload_questions = payload.get("questions")
 
     session = get_session(current_app)
     paper = _table("exam_paper")
@@ -731,6 +748,21 @@ def export_pdf(paper_id: int):
             .order_by(rel.c.question_sort.asc())
         )
         questions = [dict(r) for r in session.execute(q_stmt).mappings().all()]
+        if isinstance(payload_questions, list) and payload_questions:
+            normalized = []
+            for idx, q in enumerate(payload_questions):
+                if not isinstance(q, dict):
+                    continue
+                normalized.append({
+                    "question_sort": q.get("question_sort") or idx + 1,
+                    "question_score": q.get("question_score"),
+                    "question_id": q.get("question_id"),
+                    "question_content": q.get("question_content") or "",
+                    "question_answer": q.get("question_answer") or "",
+                    "question_analysis": q.get("question_analysis") or ""
+                })
+            if normalized:
+                questions = normalized
 
         doc = _render_word(dict(p), questions, header, footer, include_answer, paper_size)
 

@@ -28,6 +28,7 @@ const papers = ref([])
 const subjects = ref([])
 const textbooks = ref([])
 const filters = reactive({ subject_id: null, textbook_id: null })
+const canShowDependent = computed(() => !!filters.subject_id)
 
 const selectedPaperId = ref(null)
 const sheets = ref([])
@@ -365,40 +366,46 @@ import { h } from 'vue'
                   </div>
                 </div>
 
-                <div class="filter-row" v-if="textbooks.length > 0">
+                <div class="filter-row">
                   <div class="filter-label">教材</div>
                   <div class="filter-content filter-tags">
-                    <n-tag
-                      v-for="t in textbooks"
-                      :key="t.textbook_id"
-                      :bordered="false"
-                      :class="['filter-tag', filters.textbook_id === t.textbook_id ? 'tag-selected' : '']"
-                      @click="async () => {
-                        filters.textbook_id = filters.textbook_id === t.textbook_id ? null : t.textbook_id;
-                        await loadPapers()
-                      }"
-                    >
-                      {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
-                    </n-tag>
+                    <template v-if="canShowDependent && textbooks.length > 0">
+                      <n-tag
+                        v-for="t in textbooks"
+                        :key="t.textbook_id"
+                        :bordered="false"
+                        :class="['filter-tag', filters.textbook_id === t.textbook_id ? 'tag-selected' : '']"
+                        @click="async () => {
+                          filters.textbook_id = filters.textbook_id === t.textbook_id ? null : t.textbook_id;
+                          await loadPapers()
+                        }"
+                      >
+                        {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
+                      </n-tag>
+                    </template>
+                    <span v-else class="empty-hint">暂无数据</span>
                   </div>
                 </div>
 
-                <div class="filter-row" v-if="papers.length > 0">
+                <div class="filter-row">
                   <div class="filter-label">试卷</div>
                   <div class="filter-content filter-tags">
-                    <n-tag
-                      v-for="p in papers"
-                      :key="p.paper_id"
-                      :bordered="false"
-                      :class="['filter-tag', selectedPaperId === p.paper_id ? 'tag-selected' : '']"
-                      @click="async () => {
-                        selectedPaperId = selectedPaperId === p.paper_id ? null : p.paper_id;
-                        selectedSheetId = null;
-                        await loadSheets()
-                      }"
-                    >
-                      {{ p.paper_name }}
-                    </n-tag>
+                    <template v-if="canShowDependent && papers.length > 0">
+                      <n-tag
+                        v-for="p in papers"
+                        :key="p.paper_id"
+                        :bordered="false"
+                        :class="['filter-tag', selectedPaperId === p.paper_id ? 'tag-selected' : '']"
+                        @click="async () => {
+                          selectedPaperId = selectedPaperId === p.paper_id ? null : p.paper_id;
+                          selectedSheetId = null;
+                          await loadSheets()
+                        }"
+                      >
+                        {{ p.paper_name }}
+                      </n-tag>
+                    </template>
+                    <span v-else class="empty-hint">暂无数据</span>
                   </div>
                 </div>
               </template>
@@ -577,6 +584,11 @@ import { h } from 'vue'
   color: white !important;
   border: none !important;
   box-shadow: 0 2px 8px rgba(26, 95, 180, 0.4) !important;
+}
+
+.empty-hint {
+  font-size: 12px;
+  color: var(--n-text-color-3);
 }
 </style>
 

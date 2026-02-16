@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup>
 import { computed, onMounted, reactive, ref, watch, h } from 'vue'
 import { useMessage, useDialog } from 'naive-ui'
 import { RefreshOutline, AddOutline, SettingsOutline, CreateOutline, TrashOutline, CloudUploadOutline, SparklesOutline, CheckmarkOutline, CloseOutline, DownloadOutline, FunnelOutline } from '@vicons/ionicons5'
@@ -40,6 +40,7 @@ const publisherOptions = computed(() => {
   }
   return Array.from(set).map(p => ({ label: p, value: p }))
 })
+const canShowDependent = computed(() => !!filter.subject_id)
 
 const chapters = ref([])
 const chapterTree = ref([])
@@ -435,34 +436,40 @@ const filterCollapsed = ref(true)
             </div>
           </div>
 
-          <div class="filter-row" v-if="publisherOptions.length > 0">
+          <div class="filter-row">
             <div class="filter-label">出版社</div>
             <div class="filter-content filter-tags">
-              <n-tag
-                v-for="p in publisherOptions"
-                :key="p.value"
-                :bordered="false"
-                :class="['filter-tag', selectedPublisher === p.value ? 'tag-selected' : '']"
-                @click="() => { selectedPublisher = selectedPublisher === p.value ? null : p.value }"
-              >
-                {{ p.label }}
-              </n-tag>
+              <template v-if="canShowDependent && publisherOptions.length > 0">
+                <n-tag
+                  v-for="p in publisherOptions"
+                  :key="p.value"
+                  :bordered="false"
+                  :class="['filter-tag', selectedPublisher === p.value ? 'tag-selected' : '']"
+                  @click="() => { selectedPublisher = selectedPublisher === p.value ? null : p.value }"
+                >
+                  {{ p.label }}
+                </n-tag>
+              </template>
+              <span v-else class="empty-hint">{{ filter.subject_id ? '暂无数据' : '请先选择科目' }}</span>
             </div>
           </div>
 
-          <div class="filter-row" v-if="filteredTextbooks.length > 0">
+          <div class="filter-row">
             <div class="filter-label">教材</div>
             <div class="filter-content filter-tags">
-              <n-tag
-                v-for="t in filteredTextbooks.slice(0, 20)"
-                :key="t.textbook_id"
-                :bordered="false"
-                :class="['filter-tag', filterTextbookId === t.textbook_id ? 'tag-selected' : '']"
-                @click="() => { filterTextbookId = filterTextbookId === t.textbook_id ? null : t.textbook_id }"
-              >
-                {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
-              </n-tag>
-              <span v-if="filteredTextbooks.length > 20" class="more-hint">还有 {{ filteredTextbooks.length - 20 }} 个..</span>
+              <template v-if="canShowDependent && filteredTextbooks.length > 0">
+                <n-tag
+                  v-for="t in filteredTextbooks.slice(0, 20)"
+                  :key="t.textbook_id"
+                  :bordered="false"
+                  :class="['filter-tag', filterTextbookId === t.textbook_id ? 'tag-selected' : '']"
+                  @click="() => { filterTextbookId = filterTextbookId === t.textbook_id ? null : t.textbook_id }"
+                >
+                  {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
+                </n-tag>
+                <span v-if="filteredTextbooks.length > 20" class="more-hint">还有 {{ filteredTextbooks.length - 20 }} 个..</span>
+              </template>
+              <span v-else class="empty-hint">{{ filter.subject_id ? '暂无数据' : '请先选择科目' }}</span>
             </div>
           </div>
         </template>
@@ -773,6 +780,11 @@ const filterCollapsed = ref(true)
 }
 
 .more-hint {
+  font-size: 12px;
+  color: var(--n-text-color-3);
+}
+
+.empty-hint {
   font-size: 12px;
   color: var(--n-text-color-3);
 }

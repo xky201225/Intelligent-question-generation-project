@@ -490,6 +490,8 @@ def _run_variant_generation(app, job_id: str, subject_id: int, chapter_ids: list
                     "3. 题目内容应尽可能模仿【源材料】的风格。\n"
                     "4. JSON字段：type_id, question_content, question_answer, question_analysis, question_score (可选).\n"
                     "5. 【强制格式】：判断题、单选题、多选题的题干末尾，必须以中文括号（ ）结尾，不得遗漏。\n"
+                    "6. 【选项处理】：对于单选题(1)和多选题(7)，选项(A. B. C. D.)必须完整包含在 question_content 中，换行显示。\n"
+                    "7.生成的题目数量必须严格等于要求的数量，且不得包含任何与要求不符的题型。"
                 )
 
                 user_prompt = (
@@ -502,17 +504,24 @@ def _run_variant_generation(app, job_id: str, subject_id: int, chapter_ids: list
 
                 client = get_deepseek_client()
                 collected = []
+                seen_contents = set()
                 attempt = 0
                 
                 while len(collected) < target_count_per_chapter and attempt < 3:
                     attempt += 1
-                    _job_event(job_id, "ai_start", f"正在请求模型（第{attempt}次）...")
+                    missing = target_count_per_chapter - len(collected)
+                    _job_event(job_id, "ai_start", f"正在请求模型（第{attempt}次，缺{missing}题）...")
                     
+                    # 动态调整 Prompt
+                    prompt = user_prompt
+                    if attempt > 1:
+                         prompt += f"\n\n【重要】你只需要再生成 {missing} 道题即可，绝对不要重复已有题目。"
+
                     try:
                         raw_chunks = []
                         buf = ""
                         last_flush = time.time()
-                        for chunk in client.chat_stream(system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.7):
+                        for chunk in client.chat_stream(system_prompt=system_prompt, user_prompt=prompt, temperature=0.7):
                             raw_chunks.append(chunk)
                             buf += chunk
                             now_ts = time.time()
@@ -532,6 +541,10 @@ def _run_variant_generation(app, job_id: str, subject_id: int, chapter_ids: list
                             # Validate and Normalize
                             content = _pick_first(it, ["question_content", "content", "题干"])
                             if not content: continue
+                            
+                            # Check duplicates
+                            if content in seen_contents: continue
+                            seen_contents.add(content)
                             
                             answer = _pick_first(it, ["question_answer", "answer", "答案"])
                             analysis = _pick_first(it, ["question_analysis", "analysis", "解析"])
@@ -555,6 +568,10 @@ def _run_variant_generation(app, job_id: str, subject_id: int, chapter_ids: list
                         _job_event(job_id, "ai_error", f"生成出错：{str(e)}")
                 
                 # Insert into DB
+                # Safety check
+                if len(collected) > target_count_per_chapter:
+                    collected = collected[:target_count_per_chapter]
+
                 now = datetime.now()
                 for it in collected:
                     data = {

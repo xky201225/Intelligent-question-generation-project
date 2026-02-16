@@ -377,38 +377,28 @@ const tableColumns = [
               </div>
             </div>
 
-            <div class="filter-row" v-if="textbooks.length > 0">
+            <div class="filter-row">
               <div class="filter-label">教材</div>
               <div class="filter-content filter-tags">
-                <n-tag
-                  v-for="t in textbooks"
-                  :key="t.textbook_id"
-                  :bordered="false"
-                  :class="['filter-tag', filters.textbook_id === t.textbook_id ? 'tag-selected' : '']"
-                  @click="async () => {
-                    filters.textbook_id = filters.textbook_id === t.textbook_id ? null : t.textbook_id;
-                    await loadPapers()
-                  }"
-                >
-                  {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
-                </n-tag>
+                <template v-if="filters.subject_id && textbooks.length > 0">
+                  <n-tag
+                    v-for="t in textbooks"
+                    :key="t.textbook_id"
+                    :bordered="false"
+                    :class="['filter-tag', filters.textbook_id === t.textbook_id ? 'tag-selected' : '']"
+                    @click="async () => {
+                      filters.textbook_id = filters.textbook_id === t.textbook_id ? null : t.textbook_id;
+                      await loadPapers()
+                    }"
+                  >
+                    {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
+                  </n-tag>
+                </template>
+                <span v-else class="empty-hint">{{ filters.subject_id ? '暂无数据' : '请先选择科目' }}</span>
               </div>
             </div>
 
-            <div class="filter-row" v-if="publisherOptions.length > 0">
-              <div class="filter-label">出版社</div>
-              <div class="filter-content filter-tags">
-                <n-tag
-                  v-for="p in publisherOptions"
-                  :key="p.value"
-                  :bordered="false"
-                  :class="['filter-tag', filters.publisher === p.value ? 'tag-selected' : '']"
-                  @click="() => { filters.publisher = filters.publisher === p.value ? null : p.value; loadPapers() }"
-                >
-                  {{ p.label }}
-                </n-tag>
-              </div>
-            </div>
+
           </div>
         </template>
       </div>
@@ -762,5 +752,10 @@ const tableColumns = [
   color: white !important;
   border: none !important;
   box-shadow: 0 2px 8px rgba(26, 95, 180, 0.4) !important;
+}
+
+.empty-hint {
+  font-size: 12px;
+  color: var(--n-text-color-3);
 }
 </style>

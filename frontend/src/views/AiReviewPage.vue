@@ -120,7 +120,7 @@ const sourcePaperId = ref(null)
 const uploadFile = ref(null)
 const fileList = ref([])
 const filterTextbookId = ref(null)
-const filterReviewer = ref('')
+const filterReviewer = ref(null)
 const reviewers = ref([])
 
 const loadReviewers = async () => {
@@ -515,6 +515,7 @@ const typeOptions = computed(() => types.value.map(t => ({ label: t.type_name, v
 const difficultyOptions = computed(() => difficulties.value.map(d => ({ label: d.difficulty_name, value: d.difficulty_id })))
 const paperOptions = computed(() => papers.value.map(p => ({ label: p.paper_name, value: p.paper_id })))
 const reviewerOptions = computed(() => reviewers.value.map(r => ({ label: r, value: r })))
+const renderFullLabel = (option) => h('div', { style: { whiteSpace: 'normal', lineHeight: '1.4' } }, option.label)
 
 function treeToOptions(tree) {
   return tree.map(node => ({
@@ -697,8 +698,8 @@ const resultTableColumns = [
 
         <n-tab-pane name="paper" tab="试卷变式">
           <div style="margin-bottom: 12px; display: flex; gap: 8px">
-            <n-select v-model:value="filterTextbookId" :options="textbookOptions" clearable placeholder="筛选教材" style="width: 200px" @update:value="loadPapers" />
-            <n-select v-model:value="filterReviewer" :options="reviewerOptions" clearable placeholder="筛选审核人" style="width: 150px" @update:value="loadPapers" />
+            <n-select v-model:value="filterTextbookId" :options="textbookOptions" clearable placeholder="筛选教材" class="textbook-select" :render-label="renderFullLabel" style="width: 280px" @update:value="loadPapers" />
+            <n-select v-model:value="filterReviewer" :options="reviewerOptions" clearable placeholder="筛选审核人" style="width: 180px" @update:value="loadPapers" />
             <n-button @click="loadPapers"><template #icon><n-icon><RefreshOutline /></n-icon></template></n-button>
           </div>
           <n-select v-model:value="sourcePaperId" :options="paperOptions" filterable placeholder="请选择参考试卷" style="width: 100%" />
@@ -908,6 +909,11 @@ const resultTableColumns = [
   font-size: 13px;
   color: #94a3b8;
   font-style: italic;
+}
+
+.textbook-select .n-base-selection-label__rendered {
+  white-space: normal;
+  line-height: 1.2;
 }
 
 /* 小节分组容器 */
