@@ -1,15 +1,17 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch, h } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Delete, Download, Check, FullScreen, View, Rank, Search } from '@element-plus/icons-vue'
+import { useMessage, useDialog, NButton, NTag, NIcon } from 'naive-ui'
+import { RefreshOutline, TrashOutline, DownloadOutline, CheckmarkOutline, ExpandOutline, EyeOutline, ReorderFourOutline, SearchOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getUser } from '../auth'
 import ExportPreview from '../components/ExportPreview.vue'
 
+const message = useMessage()
+const dialog = useDialog()
 const loading = ref(false)
 const route = useRoute()
-const mode = computed(() => route.meta.mode || 'export') // 'export' or 'review'
+const mode = computed(() => route.meta.mode || 'export')
 
 const error = ref('')
 const showPaperDrawer = ref(false)
@@ -23,7 +25,7 @@ const textbooks = ref([])
 const filters = reactive({
   subject_id: null,
   textbook_id: null,
-  publisher: '',
+  publisher: null,
 })
 
 const publisherOptions = computed(() => {
@@ -31,7 +33,7 @@ const publisherOptions = computed(() => {
   for (const t of textbooks.value) {
     if (t.publisher) set.add(t.publisher)
   }
-  return Array.from(set)
+  return Array.from(set).map(p => ({ label: p, value: p }))
 })
 
 const selectedPaperIds = ref([])
@@ -73,8 +75,8 @@ async function submitReview(status) {
     if (!selectedPaperId.value) return
     try {
         const user = getUser()
-        const reviewer = user ? user.name : 'admin' // Fallback if no user
-        
+        const reviewer = user ? user.name : 'admin'
+
         const now = new Date()
         const review_time = now.getFullYear() + '-' +
             String(now.getMonth() + 1).padStart(2, '0') + '-' +
@@ -84,20 +86,18 @@ async function submitReview(status) {
             String(now.getSeconds()).padStart(2, '0')
         
         await http.put(`/papers/${selectedPaperId.value}`, {
-            ...paperForm, // Keep other fields
+            ...paperForm,
             review_status: status,
             reviewer: reviewer,
             review_time: review_time
         })
-        ElMessage.success(status === 1 ? '已通过审核' : '已驳回')
+        message.success(status === 1 ? '已通过审核' : '已驳回')
         await loadPaperDetail(selectedPaperId.value)
         await loadPapers()
     } catch (e) {
-        ElMessage.error(e?.message || '审核操作失败')
+        message.error(e?.message || '审核操作失败')
     }
 }
-
-const downloadBase = computed(() => http.defaults.baseURL || 'http://localhost:5000/api')
 
 async function loadPapers() {
   loading.value = true
@@ -108,12 +108,10 @@ async function loadPapers() {
     if (filters.textbook_id) params.textbook_id = filters.textbook_id
     if (filters.publisher) params.publisher = filters.publisher
     
-    // “试卷编辑/导出”只显示审核通过的模块 (mode='export')
-    // “试卷审核”只显示审核未通过的模块 (mode='review')
     if (mode.value === 'export') {
       params.review_status = 1
     } else {
-      params.review_status = 0 // Pending
+      params.review_status = 0
     }
     
     const resp = await http.get('/papers', { params })
@@ -132,7 +130,6 @@ async function loadPaperDetail(paperId) {
     exportsList.value = []
     return
   }
-  // Prevent double-fetching or fetching while main list is loading
   if (loading.value) return
 
   loading.value = true
@@ -143,11 +140,10 @@ async function loadPaperDetail(paperId) {
     questions.value = resp.data.questions || []
     paperForm.paper_name = paper.value.paper_name || ''
     paperForm.paper_desc = paper.value.paper_desc || ''
-  paperForm.exam_duration = paper.value.exam_duration
-  paperForm.is_closed_book = paper.value.is_closed_book
-  paperForm.review_status = paper.value.review_status || 0 // Default to 0 (Pending)
-  // await loadExports(paperId) // History disabled
-  showPaperDrawer.value = true
+    paperForm.exam_duration = paper.value.exam_duration
+    paperForm.is_closed_book = paper.value.is_closed_book
+    paperForm.review_status = paper.value.review_status || 0
+    showPaperDrawer.value = true
   } catch (e) {
     error.value = e?.message || '加载失败'
   } finally {
@@ -159,20 +155,12 @@ async function savePaper() {
   if (!selectedPaperId.value) return
   try {
     const payload = { ...paperForm }
-    // If status changed to Approved/Rejected, set reviewer and time
-    // But we should probably only do this if the user explicitly clicks a "Review" button
-    // For now, let's keep basic save separate from review, OR update everything if status changed.
-    // To keep it simple, we include review_status in paperForm, so it gets updated.
-    
-    // We'll handle reviewer info in a separate function 'submitReview' or here if we bind review_status.
-    // Let's assume paperForm.review_status is bound to the review controls.
-    
     await http.put(`/papers/${selectedPaperId.value}`, payload)
-    ElMessage.success('已保存')
+    message.success('已保存')
     await loadPaperDetail(selectedPaperId.value)
     await loadPapers()
   } catch (e) {
-    ElMessage.error(e?.message || '保存失败')
+    message.error(e?.message || '保存失败')
   }
 }
 
@@ -196,134 +184,33 @@ async function saveQuestions() {
         question_score: q.question_score,
       })),
     })
-    ElMessage.success('已保存题目顺序/分值')
+    message.success('已保存题目顺序/分值')
     await loadPaperDetail(selectedPaperId.value)
   } catch (e) {
-    ElMessage.error(e?.message || '保存失败')
+    message.error(e?.message || '保存失败')
   }
 }
 
-async function removePaper(row, event) {
-  if (event) event.stopPropagation()
-  try {
-    await ElMessageBox.confirm(`确认删除试卷：${row.paper_name}？`, '提示', { type: 'warning' })
-    await http.delete(`/papers/${row.paper_id}`)
-    if (selectedPaperId.value === row.paper_id) {
-      selectedPaperId.value = null
-      showPaperDrawer.value = false // Close drawer if deleted current
-    }
-    await loadPapers()
-    ElMessage.success('已删除')
-  } catch (e) {
-    if (e?.message) ElMessage.error(e.message)
-  }
-}
-
-function handleDownload(resp, defaultName) {
-    const blob = new Blob([resp.data], { type: resp.headers['content-type'] })
-    let downloadName = defaultName
-    const disposition = resp.headers['content-disposition']
-    if (disposition) {
-      if (disposition.includes('filename=')) {
-        downloadName = disposition.split('filename=')[1].split(';')[0].replace(/['"]/g, '')
-      }
-      if (disposition.includes("filename*=")) {
-         const match = disposition.match(/filename\*=UTF-8''(.+)/)
-         if (match && match[1]) {
-           try {
-             downloadName = decodeURIComponent(match[1])
-           } catch (e) {
-             console.warn('Decode filename failed', e)
-           }
-         }
-      }
-    }
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.style.display = 'none'
-    link.href = url
-    link.setAttribute('download', downloadName)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
-}
-
-async function exportWord() {
-  if (!selectedPaperId.value) return
-  try {
-    const resp = await http.post(`/papers/${selectedPaperId.value}/export/word`, {
-      include_answer: false,
-    }, { responseType: 'blob' })
-    handleDownload(resp, (paper.value?.paper_name || 'paper') + '.docx')
-    ElMessage.success('已导出Word')
-  } catch (e) {
-    ElMessage.error(e?.message || '导出失败')
-  }
-}
-
-async function exportPdf() {
-  if (!selectedPaperId.value) return
-  try {
-    const resp = await http.post(`/papers/${selectedPaperId.value}/export/pdf`, {
-      include_answer: false,
-    }, { responseType: 'blob' })
-    handleDownload(resp, (paper.value?.paper_name || 'paper') + '.pdf')
-    ElMessage.success('已导出PDF')
-  } catch (e) {
-    ElMessage.error(e?.message || '导出失败')
-  }
-}
-
-async function loadExports(paperId) {
-  const resp = await http.get(`/papers/${paperId}/exports`)
-  exportsList.value = resp.data.items || []
-}
-
-async function openDownload(paperId, versionId, filename = null) {
-  try {
-    const res = await http.get(`/papers/${paperId}/exports/${versionId}/download`, {
-      responseType: 'blob',
-    })
-    
-    let downloadName = filename
-    if (!downloadName) {
-      const disposition = res.headers['content-disposition']
-      if (disposition) {
-        // Simple fallback extraction
-        if (disposition.includes('filename=')) {
-          downloadName = disposition.split('filename=')[1].split(';')[0].replace(/['"]/g, '')
+async function removePaper(row) {
+  dialog.warning({
+    title: '提示',
+    content: `确认删除试卷：${row.paper_name}？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await http.delete(`/papers/${row.paper_id}`)
+        if (selectedPaperId.value === row.paper_id) {
+          selectedPaperId.value = null
+          showPaperDrawer.value = false
         }
-        // Try UTF-8 specific
-        if (disposition.includes("filename*=")) {
-           const match = disposition.match(/filename\*=UTF-8''(.+)/)
-           if (match && match[1]) {
-             try {
-               downloadName = decodeURIComponent(match[1])
-             } catch (e) {
-               console.warn('Decode filename failed', e)
-             }
-           }
-        }
+        await loadPapers()
+        message.success('已删除')
+      } catch (e) {
+        message.error(e?.message || '删除失败')
       }
     }
-    if (!downloadName) {
-      downloadName = `paper_export_${paperId}.docx`
-    }
-
-    const blob = new Blob([res.data], { type: res.headers['content-type'] })
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.style.display = 'none'
-    link.href = url
-    link.setAttribute('download', downloadName)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
-  } catch (e) {
-    ElMessage.error(e?.message || '下载失败')
-  }
+  })
 }
 
 function onDragStart(index) {
@@ -341,7 +228,6 @@ function onDrop(index) {
   questions.value.splice(draggingIndex.value, 1)
   questions.value.splice(index, 0, movedItem)
   
-  // Recalculate sort order immediately
   questions.value.forEach((q, idx) => {
     q.question_sort = idx + 1
   })
@@ -350,45 +236,37 @@ function onDrop(index) {
 }
 
 function handleRowClick(row) {
-  // If clicking the currently selected row, manually trigger reload
-  // because current-change event won't fire for the same row.
-  // We only check if NOT loading, to allow refresh.
-  if (!loading.value && selectedPaperId.value === row.paper_id) {
+  if (!loading.value) {
+    selectedPaperId.value = row.paper_id
     loadPaperDetail(row.paper_id)
   }
-}
-
-function handleSelectionChange(selection) {
-  selectedPaperIds.value = selection.map(item => item.paper_id)
 }
 
 async function batchDelete() {
   if (selectedPaperIds.value.length === 0) return
   
-  try {
-    await ElMessageBox.confirm(`确认批量删除选中的 ${selectedPaperIds.value.length} 份试卷？`, '提示', {
-      type: 'warning',
-      confirmButtonText: '确认删除',
-      cancelButtonText: '取消',
-      confirmButtonClass: 'el-button--danger'
-    })
-    
-    await http.post('/papers/batch-delete', { ids: selectedPaperIds.value })
-    
-    // Check if currently viewed paper is deleted
-    if (selectedPaperId.value && selectedPaperIds.value.includes(selectedPaperId.value)) {
-      selectedPaperId.value = null
-      await loadPaperDetail(null)
+  dialog.warning({
+    title: '提示',
+    content: `确认批量删除选中的 ${selectedPaperIds.value.length} 份试卷？`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await http.post('/papers/batch-delete', { ids: selectedPaperIds.value })
+
+        if (selectedPaperId.value && selectedPaperIds.value.includes(selectedPaperId.value)) {
+          selectedPaperId.value = null
+          await loadPaperDetail(null)
+        }
+
+        await loadPapers()
+        selectedPaperIds.value = []
+        message.success('批量删除成功')
+      } catch (e) {
+        message.error(e?.message || '操作失败')
+      }
     }
-    
-    await loadPapers()
-    selectedPaperIds.value = [] // Clear selection
-    ElMessage.success('批量删除成功')
-  } catch (e) {
-    if (e !== 'cancel') {
-      ElMessage.error(e?.message || '操作失败')
-    }
-  }
+  })
 }
 
 onMounted(async () => {
@@ -400,165 +278,214 @@ onMounted(async () => {
 watch(
   () => route.path,
   () => {
-    // Reload when route changes (e.g. from /papers to /paper-review)
     loadPapers()
   }
 )
+
+const subjectOptions = computed(() => subjects.value.map(s => ({ label: s.subject_name, value: s.subject_id })))
+const textbookOptions = computed(() => textbooks.value.map(t => ({ label: t.textbook_name + (t.author ? '-' + t.author : ''), value: t.textbook_id })))
+
+const closedBookOptions = [
+  { label: '未知', value: null },
+  { label: '闭卷', value: 1 },
+  { label: '开卷', value: 0 }
+]
+
+const tableColumns = [
+  { type: 'selection' },
+  { title: 'ID', key: 'paper_id', width: 90 },
+  { title: '名称', key: 'paper_name' },
+  { title: '总分', key: 'total_score', width: 90 },
+  {
+    title: '状态',
+    key: 'review_status',
+    width: 100,
+    render(row) {
+      if (row.review_status === 1) return h(NTag, { type: 'success' }, { default: () => '已通过' })
+      if (row.review_status === 2) return h(NTag, { type: 'error' }, { default: () => '未通过' })
+      return h(NTag, { type: 'warning' }, { default: () => '待审核' })
+    }
+  },
+  { title: '审核人', key: 'reviewer', width: 100 },
+  {
+    title: '审核时间',
+    key: 'review_time',
+    width: 160,
+    render(row) {
+      return row.review_time ? new Date(row.review_time).toLocaleString() : '-'
+    }
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 100,
+    render(row) {
+      return h(NButton, { size: 'small', type: 'error', onClick: (e) => { e.stopPropagation(); removePaper(row) } }, { default: () => '删除' })
+    }
+  }
+]
 </script>
 
 <template>
   <div class="page">
-    <el-alert v-if="error" :title="error" type="error" show-icon />
+    <n-alert v-if="error" type="error" :title="error" />
 
-      <el-card class="card" :header="mode === 'export' ? '试卷列表' : '待审核试卷'">
-        <template #header>
-          <div class="header">
-            <div class="filters">
-              <el-select
-                v-model="filters.subject_id"
-                clearable
-                placeholder="科目"
-                style="width: 160px"
-                @change="
-                  async () => {
-                    filters.textbook_id = null
-                    await loadTextbooks()
-                    await loadPapers()
-                  }
-                "
-              >
-                <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
-              </el-select>
+    <n-card :title="mode === 'export' ? '试卷列表' : '待审核试卷'">
+      <template #header-extra>
+        <div class="header-actions">
+          <n-button @click="loadPapers">
+            <template #icon><n-icon><SearchOutline /></n-icon></template>
+            查询
+          </n-button>
+          <n-button type="error" :disabled="selectedPaperIds.length === 0" @click="batchDelete">
+            <template #icon><n-icon><TrashOutline /></n-icon></template>
+            批量删除
+          </n-button>
+          <n-button :loading="loading" @click="loadPapers">
+            <template #icon><n-icon><RefreshOutline /></n-icon></template>
+            刷新
+          </n-button>
+        </div>
+      </template>
 
-              <el-select
-                v-model="filters.textbook_id"
-                clearable
-                placeholder="教材"
-                style="width: 200px"
-                @change="loadPapers"
-              >
-                <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? '-' + t.author : '')" :value="t.textbook_id" />
-              </el-select>
-
-              <el-select v-model="filters.publisher" clearable placeholder="出版社" style="width: 160px" @change="loadPapers">
-                <el-option v-for="p in publisherOptions" :key="p" :label="p" :value="p" />
-              </el-select>
-              
-              <el-button @click="loadPapers" :icon="Search">查询</el-button>
-            </div>
-            <div class="actions">
-              <el-button type="danger" plain @click="batchDelete" :disabled="selectedPaperIds.length === 0" :icon="Delete">批量删除</el-button>
-              <el-button :loading="loading" @click="loadPapers" :icon="Refresh">刷新</el-button>
-            </div>
+      <!-- 筛选区域：标签式布局 -->
+      <div class="filter-section">
+        <div class="filter-row">
+          <div class="filter-label">科目</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="s in subjects"
+              :key="s.subject_id"
+              :bordered="false"
+              :class="['filter-tag', filters.subject_id === s.subject_id ? 'tag-selected' : '']"
+              @click="async () => {
+                filters.subject_id = filters.subject_id === s.subject_id ? null : s.subject_id;
+                filters.textbook_id = null;
+                await loadTextbooks();
+                await loadPapers()
+              }"
+            >
+              {{ s.subject_name }}
+            </n-tag>
           </div>
-        </template>
-        <el-table
-          :data="papers"
-          :loading="loading"
-          highlight-current-row
-          height="620"
-          @row-click="handleRowClick"
-          @selection-change="handleSelectionChange"
-          @current-change="
-            async (row) => {
-              if (row) {
-                selectedPaperId = row.paper_id
-                await loadPaperDetail(selectedPaperId)
-              }
-            }
-          "
-        >
-          <el-table-column type="selection" width="55" />
-          <el-table-column prop="paper_id" label="ID" width="90" />
-          <el-table-column prop="paper_name" label="名称" min-width="200" />
-          <el-table-column prop="total_score" label="总分" width="90" />
-          <el-table-column prop="review_status" label="状态" width="100">
-             <template #default="{ row }">
-                 <el-tag v-if="row.review_status === 1" type="success">已通过</el-tag>
-                 <el-tag v-else-if="row.review_status === 2" type="danger">未通过</el-tag>
-                 <el-tag v-else type="danger">待审核</el-tag>
-             </template>
-          </el-table-column>
-          <el-table-column prop="reviewer" label="审核人" width="100" />
-          <el-table-column prop="review_time" label="审核时间" width="160">
-             <template #default="{ row }">
-                 <span v-if="row.review_time">{{ new Date(row.review_time).toLocaleString() }}</span>
-                 <span v-else>-</span>
-             </template>
-          </el-table-column>
-          <el-table-column fixed="right" label="操作" width="100">
-            <template #default="{ row }">
-              <el-button link type="danger" @click="(e) => removePaper(row, e)" :icon="Delete">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-card>
+        </div>
 
-      <el-drawer v-model="showPaperDrawer" :size="isDrawerFullscreen ? '100%' : '600px'" direction="rtl">
-        <template #header>
-          <div class="drawer-header-custom">
-            <span class="drawer-title">{{ mode === 'export' ? '试卷编辑与导出' : '试卷审核' }}</span>
-            <div class="header-actions">
-              <el-button v-if="mode === 'export'" :disabled="!selectedPaperId || paper?.review_status !== 1" @click="showPreview = true" :icon="View" size="small">导出预览</el-button>
-              <el-button link @click="isDrawerFullscreen = !isDrawerFullscreen" :icon="FullScreen" title="切换全屏" />
-            </div>
+        <div class="filter-row" v-if="textbooks.length > 0">
+          <div class="filter-label">教材</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="t in textbooks"
+              :key="t.textbook_id"
+              :bordered="false"
+              :class="['filter-tag', filters.textbook_id === t.textbook_id ? 'tag-selected' : '']"
+              @click="async () => {
+                filters.textbook_id = filters.textbook_id === t.textbook_id ? null : t.textbook_id;
+                await loadPapers()
+              }"
+            >
+              {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
+            </n-tag>
+          </div>
+        </div>
+
+        <div class="filter-row" v-if="publisherOptions.length > 0">
+          <div class="filter-label">出版社</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="p in publisherOptions"
+              :key="p.value"
+              :bordered="false"
+              :class="['filter-tag', filters.publisher === p.value ? 'tag-selected' : '']"
+              @click="() => { filters.publisher = filters.publisher === p.value ? null : p.value; loadPapers() }"
+            >
+              {{ p.label }}
+            </n-tag>
+          </div>
+        </div>
+      </div>
+
+      <n-data-table
+        :columns="tableColumns"
+        :data="papers"
+        :loading="loading"
+        :max-height="620"
+        :row-key="row => row.paper_id"
+        v-model:checked-row-keys="selectedPaperIds"
+        @update:checked-row-keys="keys => selectedPaperIds = keys"
+        :row-props="row => ({ style: 'cursor: pointer', onClick: () => handleRowClick(row) })"
+      />
+    </n-card>
+
+    <n-drawer v-model:show="showPaperDrawer" :width="isDrawerFullscreen ? '100%' : 600" placement="right">
+      <n-drawer-content :title="mode === 'export' ? '试卷编辑与导出' : '试卷审核'">
+        <template #header-extra>
+          <div class="header-actions">
+            <n-button v-if="mode === 'export'" :disabled="!selectedPaperId || paper?.review_status !== 1" size="small" @click="showPreview = true">
+              <template #icon><n-icon><EyeOutline /></n-icon></template>
+              导出预览
+            </n-button>
+            <n-button text @click="isDrawerFullscreen = !isDrawerFullscreen">
+              <template #icon><n-icon><ExpandOutline /></n-icon></template>
+            </n-button>
           </div>
         </template>
 
         <div v-if="!selectedPaperId" class="placeholder">选择左侧试卷进行编辑与导出</div>
 
         <div v-else class="detail">
-          <el-form label-width="90px" class="paperForm">
-            <el-form-item label="试卷名称">
-              <el-input v-model="paperForm.paper_name" />
-            </el-form-item>
-            <el-form-item label="考试时长">
-              <el-input-number v-model="paperForm.exam_duration" :min="0" style="width: 100%" />
-            </el-form-item>
-            <el-form-item label="闭卷">
-              <el-select v-model="paperForm.is_closed_book" placeholder="选择" style="width: 100%">
-                <el-option label="未知" :value="null" />
-                <el-option label="闭卷" :value="1" />
-                <el-option label="开卷" :value="0" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="描述">
-              <el-input v-model="paperForm.paper_desc" type="textarea" :rows="3" />
-            </el-form-item>
-          </el-form>
+          <n-form label-placement="left" label-width="90px" class="paperForm">
+            <n-form-item label="试卷名称">
+              <n-input v-model:value="paperForm.paper_name" />
+            </n-form-item>
+            <n-form-item label="考试时长">
+              <n-input-number v-model:value="paperForm.exam_duration" :min="0" style="width: 100%" />
+            </n-form-item>
+            <n-form-item label="闭卷">
+              <n-select v-model:value="paperForm.is_closed_book" :options="closedBookOptions" placeholder="选择" />
+            </n-form-item>
+            <n-form-item label="描述">
+              <n-input v-model:value="paperForm.paper_desc" type="textarea" :rows="3" />
+            </n-form-item>
+          </n-form>
           <div class="inlineActions">
-            <el-button type="primary" @click="savePaper" :icon="Check">保存试卷信息</el-button>
+            <n-button type="primary" @click="savePaper">
+              <template #icon><n-icon><CheckmarkOutline /></n-icon></template>
+              保存试卷信息
+            </n-button>
           </div>
 
-          <el-divider />
-          
+          <n-divider />
+
           <div class="review-section">
              <div class="subTitle">试卷审核</div>
              <div class="review-status">
                  当前状态：
-                 <el-tag v-if="paper?.review_status === 1" type="success">已通过</el-tag>
-                 <el-tag v-else-if="paper?.review_status === 2" type="danger">未通过</el-tag>
-                 <el-tag v-else type="danger">待审核</el-tag>
+                 <n-tag v-if="paper?.review_status === 1" type="success">已通过</n-tag>
+                 <n-tag v-else-if="paper?.review_status === 2" type="error">未通过</n-tag>
+                 <n-tag v-else type="warning">待审核</n-tag>
              </div>
              <div class="review-actions">
-                 <el-button type="success" @click="submitReview(1)" :disabled="paper?.review_status === 1">通过审核</el-button>
+                 <n-button type="success" @click="submitReview(1)" :disabled="paper?.review_status === 1">通过审核</n-button>
              </div>
              <div v-if="paper?.reviewer" class="review-info">
                  审核人：{{ paper.reviewer }} &nbsp;&nbsp; 审核时间：{{ new Date(paper.review_time).toLocaleString() }}
              </div>
           </div>
 
-          <el-divider />
+          <n-divider />
 
           <div class="inlineActions">
             <div class="subTitle">
               题目顺序与分值
               <span class="drag-hint">
-                <el-icon><Rank /></el-icon>
+                <n-icon><ReorderFourOutline /></n-icon>
                 可拖动调整顺序
               </span>
             </div>
-            <el-button type="primary" @click="saveQuestions" :icon="Check">保存顺序/分值</el-button>
+            <n-button type="primary" @click="saveQuestions">
+              <template #icon><n-icon><CheckmarkOutline /></n-icon></template>
+              保存顺序/分值
+            </n-button>
           </div>
           <div class="question-list">
             <div 
@@ -580,26 +507,26 @@ watch(
               <div class="q-controls">
                 <div class="control-item">
                   <span class="label">序号</span>
-                  <el-input-number v-model="q.question_sort" :min="1" size="small" style="width: 100px" />
+                  <n-input-number v-model:value="q.question_sort" :min="1" size="small" style="width: 100px" />
                 </div>
                 <div class="control-item">
                   <span class="label">分值</span>
-                  <el-input-number v-model="q.question_score" :min="0" :step="0.5" size="small" style="width: 100px" />
+                  <n-input-number v-model:value="q.question_score" :min="0" :step="0.5" size="small" style="width: 100px" />
                 </div>
               </div>
             </div>
           </div>
 
-          <el-divider />
-
+          <n-divider />
         </div>
-      </el-drawer>
-      
-      <ExportPreview 
-        v-model:visible="showPreview" 
-        :paper="paper" 
-        :questions="questions" 
-      />
+      </n-drawer-content>
+    </n-drawer>
+
+    <ExportPreview
+      v-model:visible="showPreview"
+      :paper="paper"
+      :questions="questions"
+    />
   </div>
 </template>
 
@@ -610,49 +537,14 @@ watch(
   gap: 12px;
 }
 
-.card {
-  width: 100%;
-}
-
-.drawer-header-custom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
-
-.drawer-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
 .header-actions {
   display: flex;
   gap: 10px;
   align-items: center;
 }
 
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.filters {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.actions {
-  display: flex;
-  gap: 10px;
-}
-
 .placeholder {
-  color: var(--el-text-color-secondary);
+  color: var(--n-text-color-3);
   font-size: 13px;
 }
 
@@ -669,10 +561,10 @@ watch(
 }
 
 .question-card {
-  border: 1px solid var(--el-border-color);
+  border: 1px solid var(--n-border-color);
   border-radius: 4px;
   padding: 10px;
-  background-color: var(--el-bg-color-overlay);
+  background-color: var(--n-card-color);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -686,8 +578,7 @@ watch(
 
 .is-dragging {
   opacity: 0.5;
-  background-color: var(--el-fill-color-light);
-  border: 1px dashed var(--el-color-primary);
+  border: 1px dashed var(--n-primary-color);
 }
 
 .q-main {
@@ -696,14 +587,13 @@ watch(
 
 .q-content {
   font-size: 14px;
-  color: var(--el-text-color-primary);
   line-height: 1.5;
   white-space: pre-wrap;
 }
 
 .q-id {
   font-weight: bold;
-  color: var(--el-color-primary);
+  color: var(--n-primary-color);
   margin-right: 5px;
 }
 
@@ -711,7 +601,6 @@ watch(
   display: flex;
   gap: 20px;
   align-items: center;
-  background-color: var(--el-fill-color-light);
   padding: 8px;
   border-radius: 4px;
 }
@@ -724,7 +613,7 @@ watch(
 
 .label {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--n-text-color-3);
 }
 
 .paperForm {
@@ -746,26 +635,17 @@ watch(
 .drag-hint {
   font-size: 12px;
   font-weight: normal;
-  color: var(--el-text-color-secondary);
+  color: var(--n-text-color-3);
   margin-left: 12px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 
-.content {
-  max-height: 80px;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  white-space: pre-wrap;
-}
 .review-section {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  background-color: var(--el-fill-color-light);
   padding: 15px;
   border-radius: 6px;
 }
@@ -784,7 +664,69 @@ watch(
 
 .review-info {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--n-text-color-3);
+}
+
+/* 标签式筛选区域样式 */
+.filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--n-color-embedded);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.filter-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.filter-label {
+  flex-shrink: 0;
+  width: 60px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--n-text-color-2);
+  line-height: 28px;
+  text-align: right;
+}
+
+.filter-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.filter-tag {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 10px !important;
+  padding: 4px 14px !important;
+  font-size: 13px !important;
+  background: rgba(100, 116, 139, 0.08) !important;
+  color: #475569 !important;
+  border: 1px solid rgba(100, 116, 139, 0.2) !important;
+}
+
+.filter-tag:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.tag-selected {
+  background: linear-gradient(135deg, #1a5fb4 0%, #2563eb 100%) !important;
+  color: white !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(26, 95, 180, 0.4) !important;
 }
 </style>
-

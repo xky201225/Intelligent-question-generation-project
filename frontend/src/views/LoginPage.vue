@@ -1,13 +1,14 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { User, Lock, Key, Ticket, Right, Refresh } from '@element-plus/icons-vue'
+import { useMessage } from 'naive-ui'
+import { PersonOutline, LockClosedOutline, KeyOutline, TicketOutline, ArrowForwardOutline, RefreshOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { setToken, setUser } from '../auth'
 import poster from '../poster.jpg'
 
 const router = useRouter()
+const message = useMessage()
 const loading = ref(false)
 const mode = ref('login') // login | register
 
@@ -81,7 +82,7 @@ async function loadStats() {
 async function submit() {
   const name = form.name.trim()
   if (!name || !form.password || !form.captchaText) {
-    ElMessage.error('请完整填写信息')
+    message.error('请完整填写信息')
     return
   }
   loading.value = true
@@ -97,11 +98,11 @@ async function submit() {
     setToken(resp.data.token)
     setUser(resp.data.user)
     if (mode.value === 'register' && resp.data?.user?.invitationCode) {
-      ElMessage.success(`注册成功，邀请码：${resp.data.user.invitationCode}`)
+      message.success(`注册成功，邀请码：${resp.data.user.invitationCode}`)
     }
     await router.replace('/dicts')
   } catch (e) {
-    ElMessage.error(e?.message || '操作失败')
+    message.error(e?.message || '操作失败')
     await loadCaptcha()
   } finally {
     loading.value = false
@@ -130,7 +131,7 @@ onUnmounted(() => {
 <template>
   <div class="login-page">
     <div class="hero">
-      <el-card class="left-panel">
+      <n-card class="left-panel">
         <template #header>
           <div class="header">
             <div class="brand">智能组卷系统 V3</div>
@@ -138,42 +139,58 @@ onUnmounted(() => {
           </div>
         </template>
 
-        <el-form label-width="72px">
-          <el-form-item label="用户名">
-            <el-input v-model="form.name" autocomplete="username" :prefix-icon="User" />
-          </el-form-item>
-          <el-form-item label="密码">
-            <el-input v-model="form.password" type="password" show-password autocomplete="current-password" :prefix-icon="Lock" />
-          </el-form-item>
-          <el-form-item label="验证码">
+        <n-form label-placement="left" label-width="72px">
+          <n-form-item label="用户名">
+            <n-input v-model:value="form.name" placeholder="请输入用户名">
+              <template #prefix>
+                <n-icon><PersonOutline /></n-icon>
+              </template>
+            </n-input>
+          </n-form-item>
+          <n-form-item label="密码">
+            <n-input v-model:value="form.password" type="password" show-password-on="click" placeholder="请输入密码">
+              <template #prefix>
+                <n-icon><LockClosedOutline /></n-icon>
+              </template>
+            </n-input>
+          </n-form-item>
+          <n-form-item label="验证码">
             <div class="captcha-row">
-              <el-input v-model="form.captchaText" :prefix-icon="Key" />
+              <n-input v-model:value="form.captchaText" placeholder="请输入验证码">
+                <template #prefix>
+                  <n-icon><KeyOutline /></n-icon>
+                </template>
+              </n-input>
               <div class="captcha-box" @click="loadCaptcha">
                 <img v-if="captcha.image" :src="captcha.image" alt="captcha" />
                 <span v-else>加载中</span>
               </div>
             </div>
-          </el-form-item>
-          <el-form-item v-if="mode === 'register'" label="邀请码">
-            <el-input v-model="form.invitationCode" placeholder="首位注册可不填" :prefix-icon="Ticket" />
-          </el-form-item>
-        </el-form>
+          </n-form-item>
+          <n-form-item v-if="mode === 'register'" label="邀请码">
+            <n-input v-model:value="form.invitationCode" placeholder="首位注册可不填">
+              <template #prefix>
+                <n-icon><TicketOutline /></n-icon>
+              </template>
+            </n-input>
+          </n-form-item>
+        </n-form>
 
         <div class="actions">
-          <el-button type="primary" :loading="loading" @click="submit" :icon="Right">{{ title }}</el-button>
-          <el-button
-            :disabled="loading"
-            :icon="Refresh"
-            @click="
-              () => {
-                mode = mode === 'login' ? 'register' : 'login'
-              }
-            "
-          >
+          <n-button type="primary" :loading="loading" @click="submit">
+            <template #icon>
+              <n-icon><ArrowForwardOutline /></n-icon>
+            </template>
+            {{ title }}
+          </n-button>
+          <n-button :disabled="loading" @click="() => { mode = mode === 'login' ? 'register' : 'login' }">
+            <template #icon>
+              <n-icon><RefreshOutline /></n-icon>
+            </template>
             切换到{{ mode === 'login' ? '注册' : '登录' }}
-          </el-button>
+          </n-button>
         </div>
-      </el-card>
+      </n-card>
 
       <div class="right-panel" :style="{ backgroundImage: `url(${poster})` }">
         <div class="right-mask"></div>
@@ -200,20 +217,28 @@ onUnmounted(() => {
 .login-page {
   min-height: 100vh;
   padding: 32px;
-  background: var(--el-bg-color-page, #f5f6f8);
+  background: #f5f6f8;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 22px;
 }
 
+:global(html[data-theme="dark"]) .login-page {
+  background: #18181c;
+}
+
 .hero {
-  background: var(--el-bg-color, #fff);
+  background: #fff;
   border-radius: 18px;
   padding: 22px;
   display: flex;
   gap: 22px;
-  box-shadow: var(--el-box-shadow-light);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+:global(html[data-theme="dark"]) .hero {
+  background: #2a2a2e;
 }
 
 .left-panel {
@@ -232,7 +257,7 @@ onUnmounted(() => {
 }
 
 .title {
-  color: var(--el-text-color-secondary);
+  color: #999;
   font-size: 13px;
 }
 
@@ -247,13 +272,18 @@ onUnmounted(() => {
   width: 120px;
   height: 40px;
   border-radius: 8px;
-  border: 1px solid var(--el-border-color);
+  border: 1px solid #e0e0e6;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--el-fill-color-light, #fafafa);
+  background: #fafafa;
   cursor: pointer;
   overflow: hidden;
+}
+
+:global(html[data-theme="dark"]) .captcha-box {
+  border-color: #4a4a4e;
+  background: #3a3a3e;
 }
 
 .captcha-box img {
@@ -284,10 +314,8 @@ onUnmounted(() => {
   background: linear-gradient(120deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.6));
 }
 
-@media (prefers-color-scheme: dark) {
-  .right-mask {
-    background: linear-gradient(120deg, rgba(20, 20, 20, 0.92), rgba(20, 20, 20, 0.6));
-  }
+:global(html[data-theme="dark"]) .right-mask {
+  background: linear-gradient(120deg, rgba(20, 20, 20, 0.92), rgba(20, 20, 20, 0.6));
 }
 
 .right-content {
@@ -307,15 +335,18 @@ onUnmounted(() => {
 .right-title {
   font-size: 18px;
   font-weight: 700;
-  color: var(--el-text-color-primary, #333);
 }
 
 .right-text {
   font-size: 14px;
   line-height: 1.7;
-  color: var(--el-text-color-regular, #555);
+  color: #555;
   min-height: 120px;
   white-space: pre-wrap;
+}
+
+:global(html[data-theme="dark"]) .right-text {
+  color: #aaa;
 }
 
 .stats {
@@ -325,14 +356,18 @@ onUnmounted(() => {
 }
 
 .stat-card {
-  background: var(--el-bg-color, #fff);
+  background: #fff;
   border-radius: 14px;
   padding: 16px;
-  box-shadow: var(--el-box-shadow-light);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-height: 76px;
+}
+
+:global(html[data-theme="dark"]) .stat-card {
+  background: #2a2a2e;
 }
 
 .stat-value {
@@ -344,16 +379,20 @@ onUnmounted(() => {
 .number {
   font-size: 22px;
   font-weight: 700;
-  color: var(--el-color-primary, #2f4b7c);
+  color: #18a058;
 }
 
 .unit {
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: #999;
 }
 
 .stat-label {
   font-size: 13px;
-  color: var(--el-text-color-regular);
+  color: #666;
+}
+
+:global(html[data-theme="dark"]) .stat-label {
+  color: #aaa;
 }
 </style>

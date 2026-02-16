@@ -1,9 +1,11 @@
 <script setup>
-import { onMounted, ref } from 'vue'
-import { Refresh, User, Document, Files, Reading } from '@element-plus/icons-vue'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { useMessage } from 'naive-ui'
+import { RefreshOutline, PersonOutline, DocumentTextOutline, FileTrayFullOutline, BookOutline } from '@vicons/ionicons5'
 import * as echarts from 'echarts'
 import { http } from '../api/http'
 
+const message = useMessage()
 const loading = ref(false)
 const error = ref('')
 
@@ -11,8 +13,10 @@ const subjects = ref([])
 const questionTypes = ref([])
 const difficulties = ref([])
 
-// 检测深色模式
-const isDarkMode = ref(window.matchMedia('(prefers-color-scheme: dark)').matches)
+function getIsDarkMode() {
+  return document.documentElement.dataset.theme === 'dark'
+}
+const isDarkMode = ref(getIsDarkMode())
 
 const stats = ref({
   users: 0,
@@ -32,15 +36,12 @@ let pieChart = null
 
 async function loadDashboard() {
   try {
-    // 1. Load Stats
     const statsResp = await http.get('/dashboard/stats')
     stats.value = statsResp.data || {}
 
-    // 2. Load Trend
     const trendResp = await http.get('/dashboard/trend')
     renderTrendChart(trendResp.data)
 
-    // 3. Load Distribution
     const distResp = await http.get('/dashboard/distribution')
     renderPieChart(distResp.data.items)
   } catch (e) {
@@ -68,16 +69,16 @@ function renderTrendChart(data) {
         type: 'line',
         data: data.questions,
         smooth: true,
-        itemStyle: { color: '#409EFF' },
-        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(64,158,255,0.3)' }, { offset: 1, color: 'rgba(64,158,255,0)' }]) }
+        itemStyle: { color: '#18a058' },
+        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(24,160,88,0.3)' }, { offset: 1, color: 'rgba(24,160,88,0)' }]) }
       },
       {
         name: '试卷生成',
         type: 'line',
         data: data.papers,
         smooth: true,
-        itemStyle: { color: '#67C23A' },
-        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(103,194,58,0.3)' }, { offset: 1, color: 'rgba(103,194,58,0)' }]) }
+        itemStyle: { color: '#2080f0' },
+        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(32,128,240,0.3)' }, { offset: 1, color: 'rgba(32,128,240,0)' }]) }
       }
     ]
   }
@@ -103,8 +104,8 @@ function renderPieChart(items) {
         center: ['35%', '50%'],
         avoidLabelOverlap: false,
         itemStyle: { borderRadius: 10, borderColor: isDarkMode.value ? '#141414' : '#fff', borderWidth: 2 },
-        label: { show: false, position: 'center' },
-        emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold' } },
+        label: { show: false, position: 'center', color: textColor },
+        emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold', color: textColor } },
         labelLine: { show: false },
         data: items
       }
@@ -134,6 +135,8 @@ async function loadAll() {
   }
 }
 
+let themeObserver = null
+
 onMounted(() => {
     loadAll()
     window.addEventListener('resize', () => {
@@ -141,49 +144,95 @@ onMounted(() => {
         pieChart?.resize()
     })
 
-    // 监听系统深色模式变化
-    const darkModeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-    darkModeMediaQuery.addEventListener('change', (e) => {
-        isDarkMode.value = e.matches
-        loadDashboard() // 重新加载图表以应用新主题
+    themeObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
+                isDarkMode.value = getIsDarkMode()
+                loadDashboard()
+            }
+        }
+    })
+    themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['data-theme']
     })
 })
+
+onUnmounted(() => {
+    if (themeObserver) {
+        themeObserver.disconnect()
+        themeObserver = null
+    }
+})
+
+const subjectColumns = [
+  { title: 'ID', key: 'subject_id', width: 80 },
+  { title: '名称', key: 'subject_name', width: 150 },
+  { title: '编码', key: 'subject_code', width: 100 },
+  { title: '年级', key: 'target_grade', width: 120 },
+  { title: '类型', key: 'teach_type' }
+]
+
+const typeColumns = [
+  { title: 'ID', key: 'type_id', width: 80 },
+  { title: '名称', key: 'type_name' },
+  { title: '编码', key: 'type_code' }
+]
+
+const difficultyColumns = [
+  { title: 'ID', key: 'difficulty_id', width: 80 },
+  { title: '名称', key: 'difficulty_name' },
+  { title: '等级', key: 'difficulty_level' }
+]
 </script>
 
 <template>
   <div class="page">
     <div class="header">
       <div class="title">基础信息仪表盘</div>
-      <el-button :loading="loading" @click="loadAll" :icon="Refresh">刷新</el-button>
+      <n-button :loading="loading" @click="loadAll">
+        <template #icon>
+          <n-icon><RefreshOutline /></n-icon>
+        </template>
+        刷新
+      </n-button>
     </div>
 
-    <el-alert v-if="error" :title="error" type="error" show-icon />
+    <n-alert v-if="error" type="error" :title="error" />
 
     <!-- 顶部统计卡片 -->
     <div class="stats-grid">
         <div class="stat-card blue">
-            <div class="stat-icon"><el-icon><User /></el-icon></div>
+            <div class="stat-icon">
+              <n-icon size="24"><PersonOutline /></n-icon>
+            </div>
             <div class="stat-content">
                 <div class="stat-label">总用户数</div>
                 <div class="stat-value">{{ stats.users }}</div>
             </div>
         </div>
         <div class="stat-card green">
-            <div class="stat-icon"><el-icon><Document /></el-icon></div>
+            <div class="stat-icon">
+              <n-icon size="24"><DocumentTextOutline /></n-icon>
+            </div>
             <div class="stat-content">
                 <div class="stat-label">题库总量</div>
                 <div class="stat-value">{{ stats.questions }} <span class="sub-text">({{ stats.pending_questions }} 待审)</span></div>
             </div>
         </div>
         <div class="stat-card orange">
-            <div class="stat-icon"><el-icon><Files /></el-icon></div>
+            <div class="stat-icon">
+              <n-icon size="24"><FileTrayFullOutline /></n-icon>
+            </div>
             <div class="stat-content">
                 <div class="stat-label">试卷总数</div>
                 <div class="stat-value">{{ stats.papers }} <span class="sub-text">({{ stats.pending_papers }} 待审)</span></div>
             </div>
         </div>
         <div class="stat-card purple">
-            <div class="stat-icon"><el-icon><Reading /></el-icon></div>
+            <div class="stat-icon">
+              <n-icon size="24"><BookOutline /></n-icon>
+            </div>
             <div class="stat-content">
                 <div class="stat-label">教材数量</div>
                 <div class="stat-value">{{ stats.textbooks }}</div>
@@ -193,41 +242,45 @@ onMounted(() => {
 
     <!-- 图表区域 -->
     <div class="charts-row">
-        <el-card class="chart-card" shadow="never">
+        <n-card class="chart-card">
             <div ref="trendChartRef" style="width: 100%; height: 350px;"></div>
-        </el-card>
-        <el-card class="chart-card" shadow="never">
+        </n-card>
+        <n-card class="chart-card">
             <div ref="pieChartRef" style="width: 100%; height: 350px;"></div>
-        </el-card>
+        </n-card>
     </div>
 
     <!-- 基础字典表格 -->
-    <el-card class="card" header="科目列表">
-      <el-table :data="subjects" :loading="loading" height="260" stripe>
-        <el-table-column prop="subject_id" label="ID" width="80" />
-        <el-table-column prop="subject_name" label="名称" width="150" />
-        <el-table-column prop="subject_code" label="编码" width="100" />
-        <el-table-column prop="target_grade" label="年级" width="120" />
-        <el-table-column prop="teach_type" label="类型" />
-      </el-table>
-    </el-card>
+    <n-card title="科目列表">
+      <n-data-table
+        :columns="subjectColumns"
+        :data="subjects"
+        :loading="loading"
+        :max-height="260"
+        striped
+      />
+    </n-card>
 
     <div class="grid">
-      <el-card class="card" header="题型定义">
-        <el-table :data="questionTypes" :loading="loading" height="260" stripe>
-          <el-table-column prop="type_id" label="ID" width="80" />
-          <el-table-column prop="type_name" label="名称" />
-          <el-table-column prop="type_code" label="编码" />
-        </el-table>
-      </el-card>
+      <n-card title="题型定义">
+        <n-data-table
+          :columns="typeColumns"
+          :data="questionTypes"
+          :loading="loading"
+          :max-height="260"
+          striped
+        />
+      </n-card>
 
-      <el-card class="card" header="难度分级">
-        <el-table :data="difficulties" :loading="loading" height="260" stripe>
-          <el-table-column prop="difficulty_id" label="ID" width="80" />
-          <el-table-column prop="difficulty_name" label="名称" />
-          <el-table-column prop="difficulty_level" label="等级" />
-        </el-table>
-      </el-card>
+      <n-card title="难度分级">
+        <n-data-table
+          :columns="difficultyColumns"
+          :data="difficulties"
+          :loading="loading"
+          :max-height="260"
+          striped
+        />
+      </n-card>
     </div>
   </div>
 </template>
@@ -248,10 +301,8 @@ onMounted(() => {
 .title {
   font-size: 20px;
   font-weight: 600;
-  color: var(--el-text-color-primary);
 }
 
-/* Stats Cards */
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -259,37 +310,45 @@ onMounted(() => {
 }
 
 .stat-card {
-    background: var(--el-bg-color);
+    background: var(--n-card-color);
     border-radius: 8px;
     padding: 20px;
     display: flex;
     align-items: center;
     gap: 15px;
-    box-shadow: 0 2px 12px 0 rgba(0,0,0,0.05);
     transition: transform 0.2s;
-    border: 1px solid var(--el-border-color-lighter);
+    border: 1px solid var(--n-border-color);
 }
 
 .stat-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 16px 0 rgba(0,0,0,0.1);
 }
 
 .stat-icon {
     width: 48px;
     height: 48px;
-    border-radius: 8px;
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 24px;
-    color: #fff;
 }
 
-.blue .stat-icon { background: linear-gradient(135deg, #409EFF, #79bbff); }
-.green .stat-icon { background: linear-gradient(135deg, #67C23A, #95d475); }
-.orange .stat-icon { background: linear-gradient(135deg, #E6A23C, #f3d19e); }
-.purple .stat-icon { background: linear-gradient(135deg, #909399, #c8c9cc); } /* Placeholder color for textbooks */
+.blue .stat-icon {
+    background: rgba(32, 128, 240, 0.1);
+    color: #2080f0;
+}
+.green .stat-icon {
+    background: rgba(24, 160, 88, 0.1);
+    color: #18a058;
+}
+.orange .stat-icon {
+    background: rgba(240, 160, 32, 0.1);
+    color: #f0a020;
+}
+.purple .stat-icon {
+    background: rgba(144, 147, 153, 0.1);
+    color: #909399;
+}
 
 .stat-content {
     flex: 1;
@@ -297,23 +356,21 @@ onMounted(() => {
 
 .stat-label {
     font-size: 14px;
-    color: var(--el-text-color-secondary);
+    color: var(--n-text-color-3);
     margin-bottom: 4px;
 }
 
 .stat-value {
-    font-size: 24px;
+    font-size: 28px;
     font-weight: bold;
-    color: var(--el-text-color-primary);
 }
 
 .sub-text {
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
+    font-size: 13px;
+    color: #f0a020;
     font-weight: normal;
 }
 
-/* Charts */
 .charts-row {
     display: grid;
     grid-template-columns: 2fr 1fr;
@@ -328,10 +385,6 @@ onMounted(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
-}
-
-.card {
-  width: 100%;
 }
 </style>
 

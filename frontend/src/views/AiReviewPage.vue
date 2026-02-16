@@ -1,14 +1,17 @@
 <script setup>
-import { onMounted, onUnmounted, reactive, ref, computed, watch, nextTick } from 'vue'
+import { onMounted, onUnmounted, reactive, ref, computed, watch, nextTick, h } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { VideoPlay, Plus, Delete, Close, Refresh } from '@element-plus/icons-vue'
+import { useMessage, useDialog, NButton, NTag, NSelect, NInputNumber } from 'naive-ui'
+import { PlayOutline, AddOutline, TrashOutline, CloseOutline, RefreshOutline, CloudUploadOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
-import { getToken } from '../auth'
+import { getToken, getUser } from '../auth'
 
+const message = useMessage()
+const dialogApi = useDialog()
 const loading = ref(false)
 const error = ref('')
 const router = useRouter()
+const route = useRoute()
 
 const subjects = ref([])
 const types = ref([])
@@ -16,54 +19,13 @@ const difficulties = ref([])
 const textbooks = ref([])
 const chapters = ref([])
 const chapterTree = ref([])
-
-const rootSelectedChapters = computed(() => {
-  const selectedSet = new Set(gen.chapter_ids)
-  const roots = []
-
-  // 判断节点是否被选中（显式选中或隐式全选）
-  const isSelected = (node) => {
-    // 1. 显式选中
-    if (selectedSet.has(node.chapter_id)) return true
-    // 2. 隐式全选（必须有子节点，且所有子节点都被选中）
-    if (node.children && node.children.length > 0) {
-      return node.children.every(child => isSelected(child))
-    }
-    return false
-  }
-
-  // 遍历树寻找最高层级的选中节点
-  const traverse = (nodes) => {
-    for (const node of nodes) {
-      if (isSelected(node)) {
-        roots.push(node.chapter_id)
-        // 既然父节点被视为选中，就不再展示子节点
-      } else {
-        if (node.children && node.children.length > 0) {
-          traverse(node.children)
-        }
-      }
-    }
-  }
-
-  traverse(chapterTree.value)
-  return roots.sort((a, b) => a - b)
-})
-
-const totalWeight = computed(() => {
-  if (gen.chapter_ids.length === 0) return 0
-  let sum = 0
-  for (const cid of rootSelectedChapters.value) {
-    sum += (gen.chapter_weights[cid] || 0)
-  }
-  return sum
-})
+const selectedMainChapters = ref([]) // 选中的大章节ID列表
 
 const gen = reactive({
   subject_id: null,
   textbook_id: null,
   chapter_ids: [],
-  chapter_weights: {}, // {chapter_id: weight}
+  chapter_weights: {},
   type_ids: [],
   configs: {},
   create_user: 'ai',
@@ -81,15 +43,8 @@ const stream = reactive({
   currentStage: '',
 })
 
-const generated = reactive({
-  items: [],
-  loading: false,
-})
-
-const detailDialog = reactive({
-  visible: false,
-  item: null
-})
+const generated = reactive({ items: [], loading: false })
+const detailDialog = reactive({ visible: false, item: null })
 
 function openDetail(row) {
   detailDialog.item = row
@@ -100,9 +55,7 @@ const modifiedRows = reactive(new Set())
 const hasUnsavedChanges = computed(() => modifiedRows.size > 0)
 const saving = ref(false)
 
-function handleRowChange(row) {
-  modifiedRows.add(row)
-}
+function handleRowChange(row) { modifiedRows.add(row) }
 
 async function saveChanges() {
   if (modifiedRows.size === 0) return
@@ -113,37 +66,18 @@ async function saveChanges() {
       chapter_id: row.chapter_id,
       difficulty_id: row.difficulty_id
     }))
-    
-    // We can use update_question endpoint one by one or implement a batch update
-    // Since we don't have batch update for arbitrary fields, let's use loop for now or add batch endpoint
-    // Actually /questions/batch-create exists, but not batch-update for general fields.
-    // However, updating one by one is slow.
-    // Let's assume we can call PUT /questions/:id
-    
-    // For better UX, let's do it in parallel
     const promises = items.map(item => http.put(`/questions/${item.question_id}`, item))
     await Promise.all(promises)
-    
-    ElMessage.success('保存成功')
+    message.success('保存成功')
     modifiedRows.clear()
-    
-    // Reload questions to reflect changes (e.g. chapter name) if needed, 
-    // but we updated local state. Just in case names need update from backend logic:
-    // await loadGeneratedQuestions(items.map(i => i.question_id)) 
-    // Actually we changed IDs, but names (difficulty_name) might be stale if we rely on them.
-    // But dropdowns use IDs. The display span uses names.
-    // If we toggle out of 'file' tab, we might see old names. 
-    // But since this is a transient result view, maybe it's fine.
-    
   } catch (e) {
-    ElMessage.error('保存失败: ' + (e.message || '未知错误'))
+    message.error('保存失败: ' + (e.message || '未知错误'))
   } finally {
     saving.value = false
   }
 }
 
 const streamBodyRef = ref(null)
-let eventSource = null
 let typingTimer = null
 let pollingTimer = null
 let outputQueue = ''
@@ -160,31 +94,28 @@ async function loadDicts() {
 }
 
 async function loadTextbooks() {
+  if (!gen.subject_id) {
+    textbooks.value = []
+    return
+  }
   const resp = await http.get('/textbooks', {
-    params: gen.subject_id ? { subject_id: gen.subject_id } : {},
+    params: { subject_id: gen.subject_id },
   })
   textbooks.value = resp.data.items || []
 }
 
 async function loadChapters() {
-  if (!gen.textbook_id) {
-    chapters.value = []
-    chapterTree.value = []
-    return
-  }
+  if (!gen.textbook_id) { chapters.value = []; chapterTree.value = []; return }
   const resp = await http.get(`/textbooks/${gen.textbook_id}/chapters`)
   chapters.value = resp.data.items || []
   chapterTree.value = resp.data.tree || []
 }
 
-const route = useRoute()
 const activeTab = ref('text')
-
 const papers = ref([])
 const sourcePaperId = ref(null)
 const uploadFile = ref(null)
 const fileList = ref([])
-
 const filterTextbookId = ref(null)
 const filterReviewer = ref('')
 const reviewers = ref([])
@@ -193,187 +124,106 @@ const loadReviewers = async () => {
   try {
     const res = await http.get('/papers/reviewers')
     reviewers.value = res.data.items || []
-  } catch (e) {
-    console.error(e)
-  }
+  } catch {}
 }
 
 async function loadPapers() {
   const params = gen.subject_id ? { subject_id: gen.subject_id } : {}
   if (filterTextbookId.value) params.textbook_id = filterTextbookId.value
   if (filterReviewer.value) params.reviewer = filterReviewer.value
-
   const resp = await http.get('/papers', { params })
   papers.value = resp.data.items || []
 }
 
-const pathToTab = {
-  '/ai-review/text': 'text',
-  '/ai-review/paper': 'paper',
-  '/ai-review/file': 'file'
-}
-
-watch(
-  () => route.path,
-  (newPath) => {
-    if (pathToTab[newPath]) {
-      activeTab.value = pathToTab[newPath]
-    }
-  },
-  { immediate: true }
-)
-
 watch(activeTab, (val) => {
   const targetPath = `/ai-review/${val}`
-  if (route.path !== targetPath) {
-    router.push(targetPath)
-  }
-  if (val === 'paper' && papers.value.length === 0) {
-    loadPapers()
-  }
+  if (route.path !== targetPath) router.push(targetPath)
+  if (val === 'paper' && papers.value.length === 0) loadPapers()
 })
 
-function handleFileChange(file) {
-  const rawFile = file.raw
+function handleFileChange({ file }) {
+  const rawFile = file.file
   const isLt10M = rawFile.size / 1024 / 1024 < 10
-  const isValidType = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(rawFile.type) || /\.(pdf|doc|docx)$/i.test(rawFile.name)
-
-  if (!isValidType) {
-    ElMessage.error('只能上传 PDF/Word 文件!')
-    fileList.value = []
-    uploadFile.value = null
-    return
-  }
-  if (!isLt10M) {
-    ElMessage.error('文件大小不能超过 10MB!')
-    fileList.value = []
-    uploadFile.value = null
-    return
-  }
-
-  fileList.value = [file]
+  const isValidType = /\.(pdf|doc|docx)$/i.test(rawFile.name)
+  if (!isValidType) { message.error('只能上传 PDF/Word 文件!'); return false }
+  if (!isLt10M) { message.error('文件大小不能超过 10MB!'); return false }
   uploadFile.value = rawFile
+  return true
 }
 
-const isChapterSelectionDisabled = computed(() => {
-  return ['paper', 'file'].includes(activeTab.value)
+const rootSelectedChapters = computed(() => {
+  const selectedSet = new Set(gen.chapter_ids)
+  const roots = []
+  const isSelected = (node) => {
+    if (selectedSet.has(node.chapter_id)) return true
+    if (node.children && node.children.length > 0) return node.children.every(child => isSelected(child))
+    return false
+  }
+  const traverse = (nodes) => {
+    for (const node of nodes) {
+      if (isSelected(node)) roots.push(node.chapter_id)
+      else if (node.children && node.children.length > 0) traverse(node.children)
+    }
+  }
+  traverse(chapterTree.value)
+  return roots.sort((a, b) => a - b)
 })
 
-function handleChapterWrapperClick() {
-  if (isChapterSelectionDisabled.value) {
-    ElMessage.info('无需选择章节，生成后可手动设置')
-  }
-}
+const totalWeight = computed(() => {
+  if (gen.chapter_ids.length === 0) return 0
+  let sum = 0
+  for (const cid of rootSelectedChapters.value) sum += (gen.chapter_weights[cid] || 0)
+  return sum
+})
 
 async function generate() {
-  // 1. 基础校验：科目必选（除非后续改为也不需要科目，但目前保持需要）
-  if (!gen.subject_id) {
-    ElMessage.warning('请选择科目')
-    return
-  }
+  if (!gen.subject_id) { message.warning('请选择科目'); return }
+  if (activeTab.value === 'text' && gen.chapter_ids.length === 0) { message.warning('请至少选择一个章节'); return }
 
-  // 2. 模式特定的校验
-  if (activeTab.value === 'text') {
-    if (gen.chapter_ids.length === 0) {
-      ElMessage.warning('请至少选择一个章节')
-      return
-    }
-  }
-
-  // Common logic for weights (only if chapters selected)
   const finalWeights = {}
   if (gen.chapter_ids.length > 0) {
-    if (totalWeight.value !== 100) {
-      ElMessage.warning(`章节权重总和必须为 100%，当前为 ${totalWeight.value}%`)
-      return
-    }
+    if (totalWeight.value !== 100) { message.warning(`章节权重总和必须为 100%，当前为 ${totalWeight.value}%`); return }
     for (const cid of rootSelectedChapters.value) {
-      if (gen.chapter_weights[cid] !== undefined) {
-        finalWeights[cid] = gen.chapter_weights[cid]
-      }
+      if (gen.chapter_weights[cid] !== undefined) finalWeights[cid] = gen.chapter_weights[cid]
     }
   }
 
   loading.value = true
   error.value = ''
-  generated.items = [] // 清空上次生成结果
+  generated.items = []
 
   try {
-    let resp;
+    let resp
     if (activeTab.value === 'text') {
-      if (gen.type_ids.length === 0) {
-        ElMessage.warning('请至少选择一个题型')
-        loading.value = false
-        return
-      }
-      
+      if (gen.type_ids.length === 0) { message.warning('请至少选择一个题型'); loading.value = false; return }
       const rules = []
       for (const tid of gen.type_ids) {
         const cfg = gen.configs[tid]
-        if (!cfg || !Array.isArray(cfg.rules) || cfg.rules.length === 0) {
-          ElMessage.warning('请为每个题型至少配置一种难度与数量')
-          loading.value = false
-          return
-        }
-        // ... (existing validation logic)
+        if (!cfg || !Array.isArray(cfg.rules) || cfg.rules.length === 0) { message.warning('请为每个题型至少配置一种难度与数量'); loading.value = false; return }
         for (const r of cfg.rules) {
-           if (!r || !r.difficulty_id || !r.count) continue
-           rules.push({
-             type_id: tid,
-             difficulty_id: r.difficulty_id,
-             count: r.count,
-           })
+          if (!r || !r.difficulty_id || !r.count) continue
+          rules.push({ type_id: tid, difficulty_id: r.difficulty_id, count: r.count })
         }
       }
-      if (rules.length === 0) {
-          ElMessage.warning('请完善题型配置')
-          loading.value = false
-          return
-      }
-
+      if (rules.length === 0) { message.warning('请完善题型配置'); loading.value = false; return }
       resp = await http.post('/ai/generate-questions', {
-        subject_id: gen.subject_id,
-        chapter_ids: gen.chapter_ids, 
-        chapter_weights: finalWeights,
-        rules: rules,
-        create_user: gen.create_user,
+        subject_id: gen.subject_id, chapter_ids: gen.chapter_ids, chapter_weights: finalWeights, rules, create_user: gen.create_user,
       })
     } else if (activeTab.value === 'paper') {
-      if (!sourcePaperId.value) {
-        ElMessage.warning('请选择来源试卷')
-        loading.value = false
-        return
-      }
+      if (!sourcePaperId.value) { message.warning('请选择来源试卷'); loading.value = false; return }
       resp = await http.post('/ai/generate-from-paper', {
-        paper_id: sourcePaperId.value,
-        subject_id: gen.subject_id,
-        chapter_ids: gen.chapter_ids,
-        create_user: gen.create_user,
+        paper_id: sourcePaperId.value, subject_id: gen.subject_id, chapter_ids: gen.chapter_ids, create_user: gen.create_user,
       })
     } else if (activeTab.value === 'file') {
-      if (!gen.textbook_id) {
-        ElMessage.warning('请选择教材')
-        loading.value = false
-        return
-      }
-      if (!uploadFile.value) {
-        ElMessage.warning('请上传文件')
-        loading.value = false
-        return
-      }
+      if (!gen.textbook_id) { message.warning('请选择教材'); loading.value = false; return }
+      if (!uploadFile.value) { message.warning('请上传文件'); loading.value = false; return }
       const formData = new FormData()
       formData.append('file', uploadFile.value)
       formData.append('subject_id', gen.subject_id)
-      // 文档变式模式下，不再使用手动选择的章节
-      // formData.append('chapter_ids', gen.chapter_ids.join(','))
       formData.append('create_user', gen.create_user)
-      
-      resp = await http.post('/ai/generate-from-file', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
+      resp = await http.post('/ai/generate-from-file', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
     }
-
-    ElMessage.success('已提交生成（后台生成中）')
+    message.success('已提交生成（后台生成中）')
     startStream(resp.data.job_id)
   } catch (e) {
     error.value = e?.message || '生成失败'
@@ -386,47 +236,27 @@ async function loadGeneratedQuestions(ids) {
   if (!ids || ids.length === 0) return
   generated.loading = true
   try {
-    const resp = await http.get('/questions', {
-      params: { ids: ids.join(',') }
-    })
+    const resp = await http.get('/questions', { params: { ids: ids.join(',') } })
     generated.items = resp.data.items || []
-  } catch (e) {
-    console.error(e)
-  } finally {
-    generated.loading = false
-  }
+  } catch {} finally { generated.loading = false }
 }
 
 async function fetchJobDetails(jobId) {
   try {
     const resp = await http.get(`/ai/jobs/${jobId}`)
     const job = resp.data.job
-    if (job && job.question_ids && job.question_ids.length > 0) {
-      await loadGeneratedQuestions(job.question_ids)
-    }
-  } catch (e) {
-    console.error(e)
-  }
+    if (job && job.question_ids && job.question_ids.length > 0) await loadGeneratedQuestions(job.question_ids)
+  } catch {}
 }
 
 function pushLine(text) {
   stream.lines.push(text)
-  if (stream.lines.length > 2000) {
-    stream.lines.splice(0, stream.lines.length - 2000)
-  }
-  requestAnimationFrame(() => scrollStreamToBottom())
-}
-
-function scrollStreamToBottom() {
-  if (!streamBodyRef.value) return
-  streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight
+  if (stream.lines.length > 2000) stream.lines.splice(0, stream.lines.length - 2000)
+  requestAnimationFrame(() => { if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight })
 }
 
 function stopTyping() {
-  if (typingTimer) {
-    clearInterval(typingTimer)
-    typingTimer = null
-  }
+  if (typingTimer) { clearInterval(typingTimer); typingTimer = null }
   outputQueue = ''
 }
 
@@ -435,43 +265,25 @@ function enqueueOutput(text) {
   outputQueue += text
   if (!typingTimer) {
     typingTimer = setInterval(() => {
-      if (!outputQueue) {
-        clearInterval(typingTimer)
-        typingTimer = null
-        return
-      }
-      const backlog = outputQueue.length
-      const step = Math.min(60, Math.max(1, Math.floor(backlog / 120)))
+      if (!outputQueue) { clearInterval(typingTimer); typingTimer = null; return }
+      const step = Math.min(60, Math.max(1, Math.floor(outputQueue.length / 120)))
       const chunk = outputQueue.slice(0, step)
       outputQueue = outputQueue.slice(step)
-
       stream.output += chunk
-      if (stream.output.length > 200000) {
-      stream.output = stream.output.slice(stream.output.length - 200000)
-    }
-    
-    // 进度更新：每输出一个包含 "question_analysis" 的题目算作完成一题
-    if (stream.totalCount > 0) {
-      const matches = stream.output.match(/"question_analysis"/g)
-      const count = matches ? matches.length : 0
-      stream.generatedCount = Math.max(stream.generatedCount, count)
-      stream.progress = Math.min(100, Math.floor((stream.generatedCount / stream.totalCount) * 100))
-    }
-    
-    requestAnimationFrame(() => scrollStreamToBottom())
+      if (stream.output.length > 200000) stream.output = stream.output.slice(stream.output.length - 200000)
+      if (stream.totalCount > 0) {
+        const matches = stream.output.match(/"question_analysis"/g)
+        const count = matches ? matches.length : 0
+        stream.generatedCount = Math.max(stream.generatedCount, count)
+        stream.progress = Math.min(100, Math.floor((stream.generatedCount / stream.totalCount) * 100))
+      }
+      requestAnimationFrame(() => { if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight })
     }, 16)
   }
 }
 
 function stopStream() {
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
-  }
-  if (pollingTimer) {
-    clearInterval(pollingTimer)
-    pollingTimer = null
-  }
+  if (pollingTimer) { clearInterval(pollingTimer); pollingTimer = null }
   stopTyping()
 }
 
@@ -486,148 +298,127 @@ function startStream(jobId) {
   stream.generatedCount = 0
   stream.totalCount = 0
   stream.currentStage = '准备中...'
-  
-  // 计算总数
+
   let total = 0
   if (activeTab.value === 'text') {
-    Object.values(gen.configs).forEach(cfg => {
-      (cfg.rules || []).forEach(r => total += (r.count || 0))
-    })
-  } else {
-    // 变式模式下，总数由后端决定，初始设为0，等待 job_start 事件更新
-    total = 0
+    Object.values(gen.configs).forEach(cfg => (cfg.rules || []).forEach(r => total += (r.count || 0)))
   }
   stream.totalCount = total
-
   outputQueue = ''
   pushLine(`任务已创建：${jobId}`)
 
   let lastEventId = 0
-
   pollingTimer = setInterval(async () => {
     try {
       const resp = await http.get(`/ai/jobs/${jobId}`)
       const job = resp.data.job
       if (!job) return
-
-      // 更新总数 (变式模式下)
-      if (stream.totalCount === 0 && job.total_count) {
-          stream.totalCount = job.total_count
-      }
-
+      if (stream.totalCount === 0 && job.total_count) stream.totalCount = job.total_count
       const events = job.events || []
       const newEvents = events.filter(e => (e.id || 0) > lastEventId)
       newEvents.sort((a, b) => (a.id || 0) - (b.id || 0))
-
       for (const ev of newEvents) {
         lastEventId = ev.id || lastEventId
-        
         if (ev.type === 'ai_delta') {
-          const t = ev?.data?.text || ''
           stream.currentStage = '正在生成题目...'
-          enqueueOutput(t)
+          enqueueOutput(ev?.data?.text || '')
         } else {
           const ts = ev.ts ? `【${ev.ts}】` : ''
           const msg = ev.message ? ` ${ev.message}` : ''
           pushLine(`${ts}${ev.type}${msg}`)
-          
-          if (ev.type === 'job_start') {
-            if (ev.data && ev.data.total_count) {
-              stream.totalCount = ev.data.total_count
-            }
-          } else if (ev.type === 'job_done') {
-            stream.status = 'done'
-            stream.currentStage = '生成完成'
-            stream.progress = 100
-            stream.generatedCount = stream.totalCount
-            
-            stopStream()
-            fetchJobDetails(stream.job_id)
-            
-            setTimeout(() => {
-              stream.visible = false
-            }, 1500)
+          if (ev.type === 'job_start' && ev.data?.total_count) stream.totalCount = ev.data.total_count
+          else if (ev.type === 'job_done') {
+            stream.status = 'done'; stream.currentStage = '生成完成'; stream.progress = 100; stream.generatedCount = stream.totalCount
+            stopStream(); fetchJobDetails(stream.job_id)
+            setTimeout(() => { stream.visible = false }, 1500)
           } else if (ev.type === 'job_error') {
-            stream.status = 'error'
-            stream.currentStage = '生成出错'
-            stopStream()
+            stream.status = 'error'; stream.currentStage = '生成出错'; stopStream()
           }
         }
       }
-      
-      // 如果后端状态已经是 done/error，但前面还没处理到 job_done 事件（极端情况），也强制结束
-      if (job.status === 'done' && stream.status !== 'done') {
-          // 这里可以选择是否补发 job_done 逻辑，或者直接结束
-          // 为保险起见，如果轮询发现 done，且我们还没处理完事件，可以继续轮询直到事件处理完
-          // 或者直接认为完成了。
-          // 既然上面已经在处理 events，理论上最终会遇到 job_done。
-          // 除非 events 丢失。
-          // 作为一个兜底，如果 job.status 是 done 且 events 也没新的了，就强制完成
-          if (newEvents.length === 0) {
-              stream.status = 'done'
-              stream.currentStage = '生成完成'
-              stream.progress = 100
-              stopStream()
-              fetchJobDetails(stream.job_id)
-              setTimeout(() => { stream.visible = false }, 1500)
-          }
-      } else if (job.status === 'error' && stream.status !== 'error') {
-          if (newEvents.length === 0) {
-              stream.status = 'error'
-              stream.currentStage = '生成出错'
-              stopStream()
-          }
+      if (job.status === 'done' && stream.status !== 'done' && newEvents.length === 0) {
+        stream.status = 'done'; stream.currentStage = '生成完成'; stream.progress = 100
+        stopStream(); fetchJobDetails(stream.job_id)
+        setTimeout(() => { stream.visible = false }, 1500)
+      } else if (job.status === 'error' && stream.status !== 'error' && newEvents.length === 0) {
+        stream.status = 'error'; stream.currentStage = '生成出错'; stopStream()
       }
-
-    } catch (e) {
-      console.error(e)
-    }
+    } catch {}
   }, 1000)
 }
 
-function startPolling(jobId) {
-  if (pollingTimer) clearInterval(pollingTimer)
-  pollingTimer = setInterval(async () => {
-    try {
-      const resp = await http.get(`/ai/jobs/${jobId}`)
-      const job = resp.data.job
-      if (job.status === 'done') {
-        clearInterval(pollingTimer)
-        pollingTimer = null
-        await fetchJobDetails(jobId)
-        ElMessageBox.alert('后台生成任务已完成！', '提示', {
-          confirmButtonText: '查看结果',
-          type: 'success'
-        })
-      } else if (job.status === 'error') {
-        clearInterval(pollingTimer)
-        pollingTimer = null
-        ElMessageBox.alert(`后台生成任务失败：${job.error || '未知错误'}`, '错误', {
-          confirmButtonText: '关闭',
-          type: 'error'
+// 计算当前可见的小章节（按大章节分组）
+const visibleSubChapterGroups = computed(() => {
+  const groups = []
+  for (const chapter of chapterTree.value) {
+    if (selectedMainChapters.value.includes(chapter.chapter_id)) {
+      if (chapter.children && chapter.children.length > 0) {
+        groups.push({
+          parent: chapter,
+          children: chapter.children
         })
       }
-    } catch (e) {
-      console.error('polling error', e)
     }
-  }, 3000)
+  }
+  return groups
+})
+
+// 切换大章节选择
+function toggleMainChapter(chapter) {
+  const idx = selectedMainChapters.value.indexOf(chapter.chapter_id)
+  if (idx >= 0) {
+    selectedMainChapters.value.splice(idx, 1)
+    if (chapter.children && chapter.children.length > 0) {
+      const childIds = chapter.children.map(c => c.chapter_id)
+      gen.chapter_ids = gen.chapter_ids.filter(id => !childIds.includes(id))
+    }
+  } else {
+    selectedMainChapters.value.push(chapter.chapter_id)
+  }
+  handleChapterChange(gen.chapter_ids)
+}
+
+// 切换小章节选择
+function toggleSubChapter(chapterId) {
+  const idx = gen.chapter_ids.indexOf(chapterId)
+  if (idx >= 0) {
+    gen.chapter_ids.splice(idx, 1)
+  } else {
+    gen.chapter_ids.push(chapterId)
+  }
+  handleChapterChange(gen.chapter_ids)
+}
+
+// 切换题型选择
+function toggleTypeId(typeId) {
+  const idx = gen.type_ids.indexOf(typeId)
+  if (idx >= 0) {
+    gen.type_ids.splice(idx, 1)
+  } else {
+    gen.type_ids.push(typeId)
+  }
+  handleTypeChange(gen.type_ids)
+}
+
+// 获取难度对应的颜色类名
+function getDifficultyClass(difficultyId, difficultyName, isSelected) {
+  const name = difficultyName?.toLowerCase() || ''
+  if (name.includes('简单') || name.includes('easy')) {
+    return isSelected ? 'difficulty-easy-selected' : 'difficulty-easy'
+  } else if (name.includes('中等') || name.includes('medium') || name.includes('普通')) {
+    return isSelected ? 'difficulty-medium-selected' : 'difficulty-medium'
+  } else if (name.includes('困难') || name.includes('hard') || name.includes('难')) {
+    return isSelected ? 'difficulty-hard-selected' : 'difficulty-hard'
+  }
+  return isSelected ? 'difficulty-default-selected' : ''
 }
 
 function handleTypeChange(val) {
   const selected = new Set(val || [])
-  Object.keys(gen.configs).forEach((k) => {
-    const tid = Number(k)
-    if (!selected.has(tid)) {
-      delete gen.configs[k]
-    }
-  })
-
-  ;(val || []).forEach((tid) => {
-    if (!gen.configs[tid]) {
-      gen.configs[tid] = { rules: [{ difficulty_id: null, count: 5 }] }
-    } else if (!Array.isArray(gen.configs[tid].rules) || gen.configs[tid].rules.length === 0) {
-      gen.configs[tid].rules = [{ difficulty_id: null, count: 5 }]
-    }
+  Object.keys(gen.configs).forEach(k => { if (!selected.has(Number(k))) delete gen.configs[k] })
+  ;(val || []).forEach(tid => {
+    if (!gen.configs[tid]) gen.configs[tid] = { rules: [{ difficulty_id: null, count: 5 }] }
+    else if (!Array.isArray(gen.configs[tid].rules) || gen.configs[tid].rules.length === 0) gen.configs[tid].rules = [{ difficulty_id: null, count: 5 }]
   })
 }
 
@@ -647,19 +438,14 @@ function removeDifficultyRule(tid, index) {
   const cfg = gen.configs[tid]
   if (!cfg || !Array.isArray(cfg.rules)) return
   cfg.rules.splice(index, 1)
-  if (cfg.rules.length === 0) {
-    cfg.rules.push({ difficulty_id: null, count: 5 })
-  }
+  if (cfg.rules.length === 0) cfg.rules.push({ difficulty_id: null, count: 5 })
 }
 
 function getChapterName(cid) {
   const find = (list) => {
     for (const c of list) {
       if (c.chapter_id === cid) return c.chapter_name
-      if (c.children) {
-        const name = find(c.children)
-        if (name) return name
-      }
+      if (c.children) { const name = find(c.children); if (name) return name }
     }
     return null
   }
@@ -672,641 +458,503 @@ function distributeChapterWeights() {
   if (count === 0) return
   const base = Math.floor(100 / count)
   const remainder = 100 % count
-  roots.forEach((cid, index) => {
-    gen.chapter_weights[cid] = base + (index < remainder ? 1 : 0)
-  })
+  roots.forEach((cid, index) => gen.chapter_weights[cid] = base + (index < remainder ? 1 : 0))
 }
 
 function handleChapterChange(val) {
-  // 当选择章节变化时，自动处理子章节选中逻辑
-  // 并同步权重配置（只保留 rootSelectedChapters 中的项）
-  
-  // 此时 rootSelectedChapters 应该已经基于新的 gen.chapter_ids 更新了
   const validRoots = new Set(rootSelectedChapters.value)
-  
-  // 1. 清理不再需要的权重
-  Object.keys(gen.chapter_weights).forEach(k => {
-    if (!validRoots.has(Number(k))) {
-      delete gen.chapter_weights[k]
-    }
-  })
-  
-  // 2. 为新增的 root 初始化权重
-  validRoots.forEach(cid => {
-    if (gen.chapter_weights[cid] === undefined) {
-      gen.chapter_weights[cid] = 10
-    }
-  })
-
+  Object.keys(gen.chapter_weights).forEach(k => { if (!validRoots.has(Number(k))) delete gen.chapter_weights[k] })
+  validRoots.forEach(cid => { if (gen.chapter_weights[cid] === undefined) gen.chapter_weights[cid] = 10 })
   distributeChapterWeights()
-}
-
-const chapterSelectRef = ref(null)
-const typeSelectRef = ref(null)
-const maxChapterTags = ref(1)
-const maxTypeTags = ref(1)
-let chapterResizeObserver = null
-let typeResizeObserver = null
-let chapterRecalcRaf = 0
-let typeRecalcRaf = 0
-
-function getTagsContainer(host) {
-  if (!host) return null
-  return host.querySelector('.el-select__tags') || host.querySelector('.el-select__selection') || host.querySelector('.el-select__wrapper')
-}
-
-async function recalcMaxTags(selectRef, maxRef, selectedLength) {
-  if (!selectRef.value) return
-  const targetLength = Math.max(1, selectedLength || 0)
-  if (maxRef.value !== targetLength) {
-    maxRef.value = targetLength
-    await nextTick()
-  }
-  const host = selectRef.value?.$el || selectRef.value
-  const tagsContainer = getTagsContainer(host)
-  if (!tagsContainer) return
-  const tags = Array.from(tagsContainer.querySelectorAll('.el-tag'))
-  if (tags.length === 0) return
-  const firstTop = tags[0].getBoundingClientRect().top
-  const fitCount = tags.filter(tag => Math.abs(tag.getBoundingClientRect().top - firstTop) < 1).length
-  const nextMax = Math.max(1, Math.min(fitCount, tags.length))
-  if (maxRef.value !== nextMax) {
-    maxRef.value = nextMax
-  }
-}
-
-function scheduleChapterRecalc() {
-  if (chapterRecalcRaf) cancelAnimationFrame(chapterRecalcRaf)
-  chapterRecalcRaf = requestAnimationFrame(() => {
-    recalcMaxTags(chapterSelectRef, maxChapterTags, gen.chapter_ids.length)
-  })
-}
-
-function scheduleTypeRecalc() {
-  if (typeRecalcRaf) cancelAnimationFrame(typeRecalcRaf)
-  typeRecalcRaf = requestAnimationFrame(() => {
-    recalcMaxTags(typeSelectRef, maxTypeTags, gen.type_ids.length)
-  })
 }
 
 onMounted(async () => {
   await loadDicts()
   await loadTextbooks()
   await loadReviewers()
-  await nextTick()
-  scheduleChapterRecalc()
-  scheduleTypeRecalc()
-
-  if (window.ResizeObserver) {
-    const chapterHost = chapterSelectRef.value?.$el || chapterSelectRef.value
-    const typeHost = typeSelectRef.value?.$el || typeSelectRef.value
-    if (chapterHost) {
-      chapterResizeObserver = new ResizeObserver(() => scheduleChapterRecalc())
-      chapterResizeObserver.observe(chapterHost)
-    }
-    if (typeHost) {
-      typeResizeObserver = new ResizeObserver(() => scheduleTypeRecalc())
-      typeResizeObserver.observe(typeHost)
-    }
-  }
 })
 
 onUnmounted(() => {
-  if (chapterResizeObserver) chapterResizeObserver.disconnect()
-  if (typeResizeObserver) typeResizeObserver.disconnect()
-  if (chapterRecalcRaf) cancelAnimationFrame(chapterRecalcRaf)
-  if (typeRecalcRaf) cancelAnimationFrame(typeRecalcRaf)
   stopStream()
-  if (pollingTimer) {
-    clearInterval(pollingTimer)
-    pollingTimer = null
-  }
+  if (pollingTimer) { clearInterval(pollingTimer); pollingTimer = null }
 })
 
-watch(() => gen.chapter_ids.length, () => scheduleChapterRecalc(), { flush: 'post' })
-watch(() => gen.type_ids.length, () => scheduleTypeRecalc(), { flush: 'post' })
+// Computed options
+const subjectOptions = computed(() => subjects.value.map(s => ({ label: s.subject_name, value: s.subject_id })))
+const textbookOptions = computed(() => textbooks.value.map(t => ({ label: t.textbook_name + (t.author ? '-' + t.author : ''), value: t.textbook_id })))
+const typeOptions = computed(() => types.value.map(t => ({ label: t.type_name, value: t.type_id })))
+const difficultyOptions = computed(() => difficulties.value.map(d => ({ label: d.difficulty_name, value: d.difficulty_id })))
+const paperOptions = computed(() => papers.value.map(p => ({ label: p.paper_name, value: p.paper_id })))
+const reviewerOptions = computed(() => reviewers.value.map(r => ({ label: r, value: r })))
+
+function treeToOptions(tree) {
+  return tree.map(node => ({
+    label: node.chapter_name, value: node.chapter_id,
+    children: node.children && node.children.length > 0 ? treeToOptions(node.children) : undefined
+  }))
+}
+const chapterCascaderOptions = computed(() => treeToOptions(chapterTree.value))
+
+const resultTableColumns = [
+  { title: 'ID', key: 'question_id', width: 80 },
+  { title: '科目', key: 'subject_name', width: 120 },
+  { title: '章节', key: 'chapter_name', width: 150, ellipsis: { tooltip: true } },
+  { title: '题型', key: 'type_name', width: 100 },
+  { title: '难度', key: 'difficulty_name', width: 80 },
+  { title: '题目内容', key: 'question_content', ellipsis: { tooltip: true }, render: row => h('div', { style: 'cursor: pointer', onClick: () => openDetail(row) }, row.question_content?.substring(0, 60)) },
+  { title: '状态', key: 'review_status', width: 100, render: row => {
+    if (row.review_status === 0) return h(NTag, { type: 'warning' }, { default: () => '待校验' })
+    if (row.review_status === 1) return h(NTag, { type: 'success' }, { default: () => '已通过' })
+    return h(NTag, { type: 'error' }, { default: () => '已拒绝' })
+  }}
+]
 </script>
 
 <template>
   <div class="page">
-    <el-card>
+    <n-card>
       <template #header>
         <div class="header">
           <div>AI出题</div>
-          <el-button type="primary" :loading="loading" @click="generate" :icon="VideoPlay">生成</el-button>
+          <n-button type="primary" :loading="loading" @click="generate">
+            <template #icon><n-icon><PlayOutline /></n-icon></template>
+            生成
+          </n-button>
         </div>
       </template>
 
-      <el-alert v-if="error" :title="error" type="error" show-icon />
+      <n-alert v-if="error" type="error" :title="error" style="margin-bottom: 12px" />
 
-      <div class="formRow">
-        <el-select
-          v-model="gen.subject_id"
-          clearable
-          placeholder="科目"
-          style="width: 180px"
-          @change="
-            async () => {
-              gen.textbook_id = null
-              gen.chapter_ids = []
-              filterTextbookId = null
-              await loadTextbooks()
-              if (activeTab === 'paper') await loadPapers()
-            }
-          "
-        >
-          <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
-        </el-select>
+      <!-- 筛选区域：标签式布局 -->
+      <div class="filter-section">
+        <div class="filter-row">
+          <div class="filter-label">科目</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="s in subjects"
+              :key="s.subject_id"
+              :bordered="false"
+              :class="['filter-tag', gen.subject_id === s.subject_id ? 'tag-selected' : '']"
+              @click="async () => {
+                gen.subject_id = gen.subject_id === s.subject_id ? null : s.subject_id;
+                gen.textbook_id = null;
+                gen.chapter_ids = [];
+                filterTextbookId = null;
+                await loadTextbooks();
+                if (activeTab === 'paper') await loadPapers()
+              }"
+            >
+              {{ s.subject_name }}
+            </n-tag>
+          </div>
+        </div>
 
-        <el-select
-          v-if="activeTab !== 'paper'"
-          v-model="gen.textbook_id"
-          clearable
-          placeholder="教材"
-          style="width: 260px"
-          @change="
-            async () => {
-              gen.chapter_ids = []
-              await loadChapters()
-            }
-          "
-        >
-          <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? ' (' + t.author + ')' : '')" :value="t.textbook_id" />
-        </el-select>
+        <div class="filter-row" v-if="textbooks.length > 0 && activeTab !== 'paper'">
+          <div class="filter-label">教材</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="t in textbooks"
+              :key="t.textbook_id"
+              :bordered="false"
+              :class="['filter-tag', gen.textbook_id === t.textbook_id ? 'tag-selected' : '']"
+              @click="async () => {
+                gen.textbook_id = gen.textbook_id === t.textbook_id ? null : t.textbook_id;
+                gen.chapter_ids = [];
+                selectedMainChapters = [];
+                await loadChapters()
+              }"
+            >
+              {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
+            </n-tag>
+          </div>
+        </div>
 
-        <div v-if="activeTab === 'text'" @click="handleChapterWrapperClick" class="chapter-select-wrapper">
-          <el-tree-select
-            ref="chapterSelectRef"
-            v-model="gen.chapter_ids"
-            :data="chapterTree"
-            :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
-            node-key="chapter_id"
-            multiple
-            show-checkbox
-            collapse-tags
-            :max-collapse-tags="maxChapterTags"
-            collapse-tags-tooltip
-            clearable
-            placeholder="章节（多选）"
-            style="width: 260px"
-            :disabled="isChapterSelectionDisabled"
-            @change="handleChapterChange"
-          />
+        <!-- 大章节选择 -->
+        <div class="filter-row" v-if="chapterTree.length > 0 && activeTab === 'text'">
+          <div class="filter-label">章节</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="chapter in chapterTree"
+              :key="chapter.chapter_id"
+              :bordered="false"
+              :class="['filter-tag', 'chapter-main', selectedMainChapters.includes(chapter.chapter_id) ? 'chapter-main-selected' : '']"
+              @click="toggleMainChapter(chapter)"
+            >
+              {{ chapter.chapter_name }}
+            </n-tag>
+          </div>
+        </div>
+
+        <!-- 小章节选择（按大章节分组显示） -->
+        <div class="filter-row sub-chapters-row" v-if="visibleSubChapterGroups.length > 0 && activeTab === 'text'">
+          <div class="filter-label">小节</div>
+          <div class="filter-content">
+            <div class="sub-chapters-container">
+              <div v-for="group in visibleSubChapterGroups" :key="group.parent.chapter_id" class="sub-chapter-group">
+                <span class="sub-chapter-group-label">{{ group.parent.chapter_name }}：</span>
+                <div class="sub-chapter-tags">
+                  <n-tag
+                    v-for="sub in group.children"
+                    :key="sub.chapter_id"
+                    :bordered="false"
+                    :class="['filter-tag', 'chapter-sub', gen.chapter_ids.includes(sub.chapter_id) ? 'chapter-sub-selected' : '']"
+                    @click="toggleSubChapter(sub.chapter_id)"
+                  >
+                    {{ sub.chapter_name }}
+                  </n-tag>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <el-tabs v-model="activeTab" type="border-card" style="margin-top: 16px" @tab-click="() => { if(activeTab === 'paper' && papers.length === 0) loadPapers() }">
-        <el-tab-pane label="AI出题" name="text">
-          <div class="formRow">
-            <el-select
-              ref="typeSelectRef"
-              v-model="gen.type_ids"
-              multiple
-              collapse-tags
-              :max-collapse-tags="maxTypeTags"
-              collapse-tags-tooltip
-              clearable
-              placeholder="选择题型（多选）"
-              style="width: 100%"
-              @change="handleTypeChange"
-            >
-              <el-option v-for="t in types" :key="t.type_id" :label="t.type_name" :value="t.type_id" />
-            </el-select>
+      <n-tabs v-model:value="activeTab" type="card" style="margin-top: 16px">
+        <n-tab-pane name="text" tab="AI出题">
+          <div class="filter-section" style="margin-top: 0;">
+            <div class="filter-row">
+              <div class="filter-label">题型</div>
+              <div class="filter-content filter-tags">
+                <n-tag
+                  v-for="t in types"
+                  :key="t.type_id"
+                  :bordered="false"
+                  :class="['filter-tag', gen.type_ids.includes(t.type_id) ? 'tag-selected' : '']"
+                  @click="toggleTypeId(t.type_id)"
+                >
+                  {{ t.type_name }}
+                </n-tag>
+              </div>
+            </div>
           </div>
-
-          <!-- 动态配置区域 -->
           <div v-if="gen.type_ids.length > 0" class="config-list">
             <div class="config-header">题型规则配置</div>
             <div v-for="tid in gen.type_ids" :key="tid" class="config-item">
               <div class="type-name">{{ getTypeName(tid) }}</div>
               <div class="rules">
                 <div v-for="(r, idx) in gen.configs[tid]?.rules" :key="idx" class="rule-row">
-                  <el-select v-model="r.difficulty_id" placeholder="难度" style="width: 140px">
-                    <el-option v-for="d in difficulties" :key="d.difficulty_id" :label="d.difficulty_name" :value="d.difficulty_id" />
-                  </el-select>
-                  <el-input-number v-model="r.count" :min="1" :max="50" style="width: 140px" />
-                  <el-button link type="danger" @click="removeDifficultyRule(tid, idx)" :icon="Delete">删除</el-button>
+                  <div class="difficulty-tags">
+                    <n-tag
+                      v-for="d in difficulties"
+                      :key="d.difficulty_id"
+                      :bordered="false"
+                      :class="['filter-tag', 'difficulty-tag', getDifficultyClass(d.difficulty_id, d.difficulty_name, r.difficulty_id === d.difficulty_id)]"
+                      @click="r.difficulty_id = d.difficulty_id"
+                    >
+                      {{ d.difficulty_name }}
+                    </n-tag>
+                  </div>
+                  <n-input-number v-model:value="r.count" :min="1" :max="50" style="width: 100px" placeholder="数量" />
+                  <span class="count-unit">题</span>
+                  <n-button text type="error" @click="removeDifficultyRule(tid, idx)">删除</n-button>
                 </div>
-                <el-button size="small" @click="addDifficultyRule(tid)" :icon="Plus">添加难度</el-button>
+                <n-button size="small" @click="addDifficultyRule(tid)"><template #icon><n-icon><AddOutline /></n-icon></template>添加难度</n-button>
               </div>
             </div>
           </div>
-        </el-tab-pane>
+        </n-tab-pane>
 
-        <el-tab-pane label="试卷变式" name="paper">
+        <n-tab-pane name="paper" tab="试卷变式">
           <div style="margin-bottom: 12px; display: flex; gap: 8px">
-            <el-select
-              v-model="filterTextbookId"
-              clearable
-              placeholder="筛选教材"
-              style="width: 200px"
-              @change="loadPapers"
-            >
-              <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? ' (' + t.author + ')' : '')" :value="t.textbook_id" />
-            </el-select>
-            <el-select
-              v-model="filterReviewer"
-              clearable
-              placeholder="筛选审核人"
-              style="width: 150px"
-              @change="loadPapers"
-            >
-              <el-option v-for="r in reviewers" :key="r" :label="r" :value="r" />
-            </el-select>
-            <el-button :icon="Refresh" circle @click="loadPapers" />
+            <n-select v-model:value="filterTextbookId" :options="textbookOptions" clearable placeholder="筛选教材" style="width: 200px" @update:value="loadPapers" />
+            <n-select v-model:value="filterReviewer" :options="reviewerOptions" clearable placeholder="筛选审核人" style="width: 150px" @update:value="loadPapers" />
+            <n-button @click="loadPapers"><template #icon><n-icon><RefreshOutline /></n-icon></template></n-button>
           </div>
+          <n-select v-model:value="sourcePaperId" :options="paperOptions" filterable placeholder="请选择参考试卷" style="width: 100%" />
+          <div class="tip-text">系统将分析选中试卷的题型、难度与风格，为您生成类似的变式题目。</div>
+        </n-tab-pane>
 
-          <el-select 
-            v-model="sourcePaperId" 
-            placeholder="请选择参考试卷" 
-            style="width: 100%"
-            filterable
-          >
-            <el-option 
-              v-for="p in papers" 
-              :key="p.paper_id" 
-              :label="p.paper_name" 
-              :value="p.paper_id" 
-            />
-          </el-select>
-          <div class="tip-text">系统将分析选中试卷的题型、难度与风格以及相关联的章节，为您选中的试卷生成类似的变式题目。</div>
-        </el-tab-pane>
+        <n-tab-pane name="file" tab="文档变式">
+          <n-upload action="" :max="1" :default-upload="false" @change="handleFileChange" accept=".pdf,.doc,.docx">
+            <n-upload-dragger>
+              <div style="margin-bottom: 12px"><n-icon size="48"><CloudUploadOutline /></n-icon></div>
+              <n-text>拖拽文件到此处或点击上传</n-text>
+              <n-p depth="3" style="margin: 8px 0 0 0">支持 PDF/Word 文件。系统将分析文档内容生成相关题目。</n-p>
+            </n-upload-dragger>
+          </n-upload>
+        </n-tab-pane>
+      </n-tabs>
 
-        <el-tab-pane label="文档变式" name="file">
-          <el-upload
-            class="upload-demo"
-            drag
-            action=""
-            :auto-upload="false"
-            :limit="1"
-            :on-change="handleFileChange"
-            :file-list="fileList"
-            accept=".pdf,.doc,.docx"
-          >
-            <el-icon class="el-icon--upload"><upload-filled /></el-icon>
-            <div class="el-upload__text">拖拽文件到此处或 <em>点击上传</em></div>
-            <template #tip>
-              <div class="el-upload__tip">
-                支持 PDF/Word 文件。系统将分析文档内容，为目标章节生成相关题目。
-              </div>
-            </template>
-          </el-upload>
-        </el-tab-pane>
-      </el-tabs>
-
-      <!-- 章节权重配置区域 (Common) -->
       <div v-if="gen.chapter_ids.length > 0 && activeTab === 'text'" class="config-list" style="margin-top: 16px">
         <div class="config-header">
           章节权重设置
-          <span :style="{ color: totalWeight === 100 ? '#67C23A' : '#F56C6C', fontSize: '14px', fontWeight: 'normal', marginLeft: '10px' }">
+          <span :style="{ color: totalWeight === 100 ? '#18a058' : '#d03050', fontSize: '14px', fontWeight: 'normal', marginLeft: '10px' }">
             (当前总和: {{ totalWeight }}%)
           </span>
-          <el-button size="small" style="margin-left: 8px" @click="distributeChapterWeights">平均分配</el-button>
+          <n-button size="small" style="margin-left: 8px" @click="distributeChapterWeights">平均分配</n-button>
         </div>
         <div class="weight-grid">
           <div v-for="cid in rootSelectedChapters" :key="cid" class="weight-item">
             <span class="weight-label" :title="getChapterName(cid)">{{ getChapterName(cid) }}</span>
-            <el-input-number 
-              v-model="gen.chapter_weights[cid]" 
-              :min="0" 
-              :max="100" 
-              controls-position="right"
-              style="width: 100px" 
-            />
+            <n-input-number v-model:value="gen.chapter_weights[cid]" :min="0" :max="100" style="width: 100px" />
             <span class="weight-unit">%</span>
           </div>
         </div>
       </div>
-    </el-card>
+    </n-card>
 
-    <div 
-      v-if="gen.chapter_ids.length === 0 && gen.type_ids.length === 0 && generated.items.length === 0" 
-      class="welcome-placeholder"
-    >
-      欢迎使用
-    </div>
-
-    <el-card v-if="generated.items.length > 0">
+    <n-card v-if="generated.items.length > 0">
       <template #header>
         <div class="header">
           <span>本次生成结果 ({{ generated.items.length }})</span>
           <div style="display: flex; gap: 8px">
-            <el-button v-if="hasUnsavedChanges" type="success" :loading="saving" @click="saveChanges">保存修改</el-button>
-            <el-button link type="primary" @click="router.push('/question-verify')">前往校验页面 &gt;</el-button>
+            <n-button v-if="hasUnsavedChanges" type="success" :loading="saving" @click="saveChanges">保存修改</n-button>
+            <n-button text type="primary" @click="router.push('/question-verify')">前往校验页面 &gt;</n-button>
           </div>
         </div>
       </template>
-      <el-table :data="generated.items" style="width: 100%" v-loading="generated.loading">
-        <el-table-column prop="question_id" label="ID" width="80" />
-        <el-table-column prop="subject_name" label="科目" width="120" />
-        <el-table-column label="章节" width="220" show-overflow-tooltip>
-          <template #default="{ row }">
-            <el-tree-select
-              v-if="activeTab === 'file'"
-              v-model="row.chapter_id"
-              :data="chapterTree"
-              :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
-              node-key="chapter_id"
-              check-strictly
-              clearable
-              placeholder="请选择章节"
-              size="small"
-              style="width: 100%"
-              @change="() => handleRowChange(row)"
-            />
-            <span v-else>{{ row.chapter_name }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="type_name" label="题型" width="100" />
-        <el-table-column label="难度" width="120">
-          <template #default="{ row }">
-            <el-select 
-              v-if="activeTab === 'file'"
-              v-model="row.difficulty_id" 
-              placeholder="难度" 
-              size="small" 
-              style="width: 100%"
-              @change="() => handleRowChange(row)"
-            >
-              <el-option v-for="d in difficulties" :key="d.difficulty_id" :label="d.difficulty_name" :value="d.difficulty_id" />
-            </el-select>
-            <span v-else>{{ row.difficulty_name }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="题目内容">
-          <template #default="{ row }">
-            <div class="contentCell" @click="openDetail(row)" title="点击查看详情">{{ row.question_content }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="row.review_status === 0" type="warning">待校验</el-tag>
-            <el-tag v-else-if="row.review_status === 1" type="success">已通过</el-tag>
-            <el-tag v-else-if="row.review_status === 2" type="danger">已拒绝</el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+      <n-data-table :columns="resultTableColumns" :data="generated.items" :loading="generated.loading" :max-height="400" />
+    </n-card>
 
-    <el-dialog v-model="detailDialog.visible" title="题目详情" width="600px">
+    <n-modal v-model:show="detailDialog.visible" preset="card" title="题目详情" style="width: 600px">
       <div v-if="detailDialog.item">
-        <el-descriptions :column="1" border>
-          <el-descriptions-item label="题干">
-            <div style="white-space: pre-wrap">{{ detailDialog.item.question_content }}</div>
-          </el-descriptions-item>
-          <el-descriptions-item label="答案">
-            <div style="white-space: pre-wrap">{{ detailDialog.item.question_answer }}</div>
-          </el-descriptions-item>
-          <el-descriptions-item label="解析">
-            <div style="white-space: pre-wrap">{{ detailDialog.item.question_analysis }}</div>
-          </el-descriptions-item>
-        </el-descriptions>
+        <n-descriptions :column="1" bordered>
+          <n-descriptions-item label="题干"><div style="white-space: pre-wrap">{{ detailDialog.item.question_content }}</div></n-descriptions-item>
+          <n-descriptions-item label="答案"><div style="white-space: pre-wrap">{{ detailDialog.item.question_answer }}</div></n-descriptions-item>
+          <n-descriptions-item label="解析"><div style="white-space: pre-wrap">{{ detailDialog.item.question_analysis }}</div></n-descriptions-item>
+        </n-descriptions>
       </div>
-      <template #footer>
-        <el-button @click="detailDialog.visible = false">关闭</el-button>
-      </template>
-    </el-dialog>
+      <template #footer><n-button @click="detailDialog.visible = false">关闭</n-button></template>
+    </n-modal>
 
     <div v-if="stream.visible" class="streamPanel">
       <div class="streamHeader">
-        <div class="streamTitle">
-          <span>生成过程</span>
-          <span class="streamMeta">ID: {{ stream.job_id }}（{{ stream.status }}）</span>
-        </div>
+        <div class="streamTitle"><span>生成过程</span><span class="streamMeta">ID: {{ stream.job_id }}（{{ stream.status }}）</span></div>
         <div class="streamActions">
-          <el-button size="small" @click="stream.output = ''; stream.lines = []" :icon="Delete">清空</el-button>
-          <el-button size="small" @click="stream.visible = false" :icon="Close">关闭</el-button>
+          <n-button size="small" @click="stream.output = ''; stream.lines = []"><template #icon><n-icon><TrashOutline /></n-icon></template>清空</n-button>
+          <n-button size="small" @click="stream.visible = false"><template #icon><n-icon><CloseOutline /></n-icon></template>关闭</n-button>
         </div>
       </div>
-
-      <!-- 顶部固定进度栏 -->
       <div class="streamProgress">
         <div class="progress-info">
           <span class="stage-text">{{ stream.currentStage }}</span>
           <span class="count-text">已生成 {{ stream.generatedCount }} / {{ stream.totalCount }}</span>
         </div>
-        <el-progress 
-          :percentage="stream.progress" 
-          :stroke-width="8" 
-          striped 
-          striped-flow 
-          :duration="10"
-        />
+        <n-progress :percentage="stream.progress" :height="8" :show-indicator="false" />
       </div>
-
       <div ref="streamBodyRef" class="streamBody">
-        <div v-if="stream.lines.length > 0" class="streamLines">
-          <div v-for="(l, i) in stream.lines" :key="i">{{ l }}</div>
-        </div>
+        <div v-if="stream.lines.length > 0" class="streamLines"><div v-for="(l, i) in stream.lines" :key="i">{{ l }}</div></div>
         <div v-else class="streamHint">等待事件流…</div>
-
-        <div v-if="stream.output" class="streamOutput">
-          <div class="streamOutputTitle">模型输出（实时）</div>
-          <pre class="streamOutputPre">{{ stream.output }}</pre>
-        </div>
+        <div v-if="stream.output" class="streamOutput"><div class="streamOutputTitle">模型输出（实时）</div><pre class="streamOutputPre">{{ stream.output }}</pre></div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.page {
+.page { display: flex; flex-direction: column; gap: 12px; }
+.header { display: flex; align-items: center; justify-content: space-between; }
+
+/* 标签式筛选区域样式 */
+.filter-section {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: 16px;
+  background: var(--n-color-embedded);
+  border-radius: 12px;
 }
 
-.header {
+.filter-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.filter-label {
+  flex-shrink: 0;
+  width: 60px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--n-text-color-2);
+  line-height: 28px;
+  text-align: right;
+}
+
+.filter-content {
+  flex: 1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
 }
 
-.formRow {
+.filter-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-}
-
-.config-list {
-  margin-top: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background-color: var(--el-fill-color-light);
-  padding: 12px;
-  border-radius: 4px;
-}
-
-.config-header {
-  font-weight: bold;
-  color: var(--el-color-primary);
-  margin-bottom: 8px;
-}
-
-.config-item {
-  display: flex;
-  gap: 12px;
-}
-
-.type-name {
-  width: 120px;
-  text-align: right;
-  font-weight: 700;
-  color: var(--el-text-color-regular);
-  padding-top: 6px;
-}
-
-.rules {
-  display: flex;
-  flex-direction: column;
   gap: 8px;
+  align-items: center;
 }
 
-.rule-row {
+.filter-tag {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 10px !important;
+  padding: 4px 14px !important;
+  font-size: 13px !important;
+  background: rgba(100, 116, 139, 0.08) !important;
+  color: #475569 !important;
+  border: 1px solid rgba(100, 116, 139, 0.2) !important;
+}
+
+.filter-tag:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* 统一选中样式 - 深蓝色渐变 */
+.tag-selected {
+  background: linear-gradient(135deg, #1a5fb4 0%, #2563eb 100%) !important;
+  color: white !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(26, 95, 180, 0.4) !important;
+}
+
+/* 小节分组容器 */
+.sub-chapters-row .filter-content {
+  align-items: flex-start;
+}
+
+.sub-chapters-container {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.sub-chapter-group {
+  display: flex;
+  align-items: flex-start;
   gap: 10px;
 }
 
-.streamPanel {
-  position: fixed;
-  right: 18px;
-  top: 86px;
-  width: 520px;
-  height: 70vh;
-  background-color: var(--el-bg-color);
-  border: 1px solid var(--el-border-color);
-  border-radius: 10px;
-  box-shadow: var(--el-box-shadow);
-  display: flex;
-  flex-direction: column;
-  z-index: 2000;
-}
-
-.streamHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--el-border-color);
-}
-
-.streamTitle {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.streamMeta {
-  color: var(--el-text-color-secondary);
+.sub-chapter-group-label {
+  flex-shrink: 0;
   font-size: 12px;
+  font-weight: 600;
+  color: #1a5fb4;
+  line-height: 26px;
+  min-width: 100px;
 }
 
-.streamActions {
+.sub-chapter-tags {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
 }
 
-.streamProgress {
-  padding: 10px 12px;
-  background-color: var(--el-bg-color-page);
-  border-bottom: 1px solid var(--el-border-color);
+/* 大章节 - 深蓝色 */
+.chapter-main {
+  font-weight: 600 !important;
+  background: rgba(32, 128, 240, 0.1) !important;
+  color: #1a5fb4 !important;
+  border: 1px solid rgba(32, 128, 240, 0.3) !important;
+}
+
+.chapter-main-selected {
+  background: linear-gradient(135deg, #1a5fb4 0%, #2563eb 100%) !important;
+  color: white !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(26, 95, 180, 0.4) !important;
+}
+
+/* 子章节 - 浅蓝色 */
+.chapter-sub {
+  font-size: 12px !important;
+  padding: 3px 10px !important;
+  background: rgba(96, 165, 250, 0.08) !important;
+  color: #3b82f6 !important;
+  border: 1px solid rgba(96, 165, 250, 0.25) !important;
+}
+
+.chapter-sub-selected {
+  background: linear-gradient(135deg, #60a5fa 0%, #93c5fd 100%) !important;
+  color: white !important;
+  border: none !important;
+  box-shadow: 0 2px 6px rgba(96, 165, 250, 0.35) !important;
+}
+
+/* 难度颜色 */
+.difficulty-tags {
   display: flex;
-  flex-direction: column;
   gap: 6px;
 }
 
-.progress-info {
-  display: flex;
-  justify-content: space-between;
+.difficulty-tag {
+  font-weight: 500 !important;
+  padding: 2px 10px !important;
+  font-size: 12px !important;
+}
+
+.difficulty-easy {
+  color: #18a058 !important;
+  border-color: #18a058 !important;
+  background: rgba(24, 160, 88, 0.08) !important;
+}
+
+.difficulty-easy-selected {
+  background: linear-gradient(135deg, #18a058 0%, #36ad6a 100%) !important;
+  color: white !important;
+  border: none !important;
+}
+
+.difficulty-medium {
+  color: #f0a020 !important;
+  border-color: #f0a020 !important;
+  background: rgba(240, 160, 32, 0.08) !important;
+}
+
+.difficulty-medium-selected {
+  background: linear-gradient(135deg, #f0a020 0%, #fcb040 100%) !important;
+  color: white !important;
+  border: none !important;
+}
+
+.difficulty-hard {
+  color: #d03050 !important;
+  border-color: #d03050 !important;
+  background: rgba(208, 48, 80, 0.08) !important;
+}
+
+.difficulty-hard-selected {
+  background: linear-gradient(135deg, #d03050 0%, #e88080 100%) !important;
+  color: white !important;
+  border: none !important;
+}
+
+.difficulty-default-selected {
+  background: linear-gradient(135deg, #2080f0 0%, #409eff 100%) !important;
+  color: white !important;
+  border: none !important;
+}
+
+.count-unit {
+  color: var(--n-text-color-3);
   font-size: 13px;
-  color: var(--el-text-color-regular);
 }
 
-.stage-text {
-  font-weight: 500;
-  color: var(--el-color-primary);
-}
-
-.count-text {
-  color: var(--el-text-color-secondary);
-}
-
-.streamBody {
-  padding: 10px 12px;
-  overflow: auto;
-  flex: 1;
-}
-
-.streamLines {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-  color: var(--el-text-color-regular);
-  margin-bottom: 12px;
-}
-
-.streamHint {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
-
-.streamOutputTitle {
-  font-weight: 700;
-  margin-bottom: 6px;
-}
-
-.contentCell {
-  max-height: 80px;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  white-space: pre-wrap;
-  cursor: pointer;
-}
-
-.contentCell:hover {
-  color: var(--el-color-primary);
-}
-
-.streamOutputPre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 12px;
-  color: var(--el-text-color-regular);
-}
-
-.welcome-placeholder {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 400px;
-  font-size: 80px;
-  font-weight: bold;
-  color: #A0CFFF;
-  font-family: "YouYuan", "Mv Boli", "Comic Sans MS", "Hanyi", "Microsoft YaHei", sans-serif;
-  opacity: 0.9;
-  user-select: none;
-  pointer-events: none;
-  letter-spacing: 8px;
-  text-shadow: 3px 3px 6px rgba(160, 207, 255, 0.4);
-  animation: float 3s ease-in-out infinite;
-}
-
-@keyframes float {
-  0% {
-    transform: translateY(0px);
-  }
-  50% {
-    transform: translateY(-15px);
-  }
-  100% {
-    transform: translateY(0px);
-  }
-}
+.config-list { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; background-color: var(--n-color-embedded); padding: 16px; border-radius: 12px; }
+.config-header { font-weight: bold; color: var(--n-primary-color); margin-bottom: 8px; }
+.config-item { display: flex; gap: 12px; }
+.type-name { width: 100px; text-align: right; font-weight: 700; padding-top: 6px; color: var(--n-text-color-1); }
+.rules { display: flex; flex-direction: column; gap: 8px; }
+.rule-row { display: flex; align-items: center; gap: 10px; }
+.weight-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+.weight-item { display: flex; align-items: center; gap: 8px; }
+.weight-label { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.weight-unit { color: var(--n-text-color-3); }
+.tip-text { margin-top: 12px; color: var(--n-text-color-3); font-size: 13px; }
+.streamPanel { position: fixed; right: 18px; top: 86px; width: 520px; height: 70vh; background-color: var(--n-card-color); border: 1px solid var(--n-border-color); border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); display: flex; flex-direction: column; z-index: 2000; }
+.streamHeader { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--n-border-color); }
+.streamTitle { display: flex; flex-direction: column; gap: 2px; }
+.streamMeta { color: var(--n-text-color-3); font-size: 12px; }
+.streamActions { display: flex; gap: 8px; }
+.streamProgress { padding: 10px 12px; border-bottom: 1px solid var(--n-border-color); display: flex; flex-direction: column; gap: 6px; }
+.progress-info { display: flex; justify-content: space-between; font-size: 13px; }
+.stage-text { font-weight: 500; color: var(--n-primary-color); }
+.count-text { color: var(--n-text-color-3); }
+.streamBody { padding: 10px 12px; overflow: auto; flex: 1; }
+.streamLines { font-family: monospace; font-size: 12px; white-space: pre-wrap; margin-bottom: 12px; }
+.streamHint { color: var(--n-text-color-3); font-size: 12px; }
+.streamOutputTitle { font-weight: 700; margin-bottom: 6px; }
+.streamOutputPre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: monospace; font-size: 12px; }
 </style>
-

@@ -1,10 +1,12 @@
 <script setup>
-import { onMounted, reactive, ref, h } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Plus, Edit, Delete, Upload, Download, VideoPlay, Close } from '@element-plus/icons-vue'
+import { onMounted, reactive, ref, h, computed } from 'vue'
+import { useMessage, useDialog, NButton, NTag, NIcon, NSelect, NCascader } from 'naive-ui'
+import { SearchOutline, AddOutline, CreateOutline, TrashOutline, CloudUploadOutline, DownloadOutline, PlayOutline, CloseOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getToken, getUser } from '../auth'
 
+const message = useMessage()
+const dialog = useDialog()
 const loading = ref(false)
 const error = ref('')
 
@@ -14,6 +16,7 @@ const difficulties = ref([])
 const textbooks = ref([])
 const chapters = ref([])
 const chapterTree = ref([])
+const selectedMainChapters = ref([]) // 选中的大章节ID列表
 
 const filter = reactive({
   q: '',
@@ -32,9 +35,9 @@ const data = reactive({
   total: 0,
 })
 
-const selectedIds = ref([])
+const checkedRowKeys = ref([])
 
-const dialog = reactive({
+const questionDialog = reactive({
   visible: false,
   mode: 'create',
   form: {
@@ -59,7 +62,7 @@ const dialogChapterTree = ref([])
 
 async function loadDialogTextbooks() {
   const resp = await http.get('/textbooks', {
-    params: dialog.form.subject_id ? { subject_id: dialog.form.subject_id } : {},
+    params: questionDialog.form.subject_id ? { subject_id: questionDialog.form.subject_id } : {},
   })
   dialogTextbooks.value = resp.data.items || []
 }
@@ -76,8 +79,12 @@ async function loadDicts() {
 }
 
 async function loadTextbooks() {
+  if (!filter.subject_id) {
+    textbooks.value = []
+    return
+  }
   const resp = await http.get('/textbooks', {
-    params: filter.subject_id ? { subject_id: filter.subject_id } : {},
+    params: { subject_id: filter.subject_id },
   })
   textbooks.value = resp.data.items || []
 }
@@ -100,6 +107,76 @@ async function loadDialogChapters() {
   }
   const resp = await http.get(`/textbooks/${dialogTextbookId.value}/chapters`)
   dialogChapterTree.value = resp.data.tree || []
+}
+
+// 将章节树扁平化为一维数组，带层级信息
+function flattenChapters(tree, level = 1) {
+  const result = []
+  for (const node of tree) {
+    result.push({ ...node, level })
+    if (node.children && node.children.length > 0) {
+      result.push(...flattenChapters(node.children, level + 1))
+    }
+  }
+  return result
+}
+
+// 计算当前可见的小章节（按大章节分组）
+const visibleSubChapterGroups = computed(() => {
+  const groups = []
+  for (const chapter of chapterTree.value) {
+    if (selectedMainChapters.value.includes(chapter.chapter_id)) {
+      if (chapter.children && chapter.children.length > 0) {
+        groups.push({
+          parent: chapter,
+          children: chapter.children
+        })
+      }
+    }
+  }
+  return groups
+})
+
+// 切换大章节选择
+function toggleMainChapter(chapter) {
+  const idx = selectedMainChapters.value.indexOf(chapter.chapter_id)
+  if (idx >= 0) {
+    // 取消选择大章节，同时移除其下所有子章节的选中状态
+    selectedMainChapters.value.splice(idx, 1)
+    if (chapter.children && chapter.children.length > 0) {
+      const childIds = chapter.children.map(c => c.chapter_id)
+      filter.chapter_id = filter.chapter_id.filter(id => !childIds.includes(id))
+    }
+  } else {
+    // 选择大章节
+    selectedMainChapters.value.push(chapter.chapter_id)
+  }
+  search()
+}
+
+// 切换小章节选择
+function toggleSubChapter(chapterId) {
+  const idx = filter.chapter_id.indexOf(chapterId)
+  if (idx >= 0) {
+    filter.chapter_id.splice(idx, 1)
+  } else {
+    filter.chapter_id.push(chapterId)
+  }
+  search()
+}
+
+// 获取难度对应的颜色类名
+function getDifficultyClass(difficultyId, difficultyName) {
+  const selected = filter.difficulty_id === difficultyId
+  const name = difficultyName?.toLowerCase() || ''
+  if (name.includes('简单') || name.includes('easy')) {
+    return selected ? 'difficulty-easy-selected' : 'difficulty-easy'
+  } else if (name.includes('中等') || name.includes('medium') || name.includes('普通')) {
+    return selected ? 'difficulty-medium-selected' : 'difficulty-medium'
+  } else if (name.includes('困难') || name.includes('hard') || name.includes('难')) {
+    return selected ? 'difficulty-hard-selected' : 'difficulty-hard'
+  }
+  return selected ? 'difficulty-default-selected' : ''
 }
 
 async function search() {
@@ -135,10 +212,9 @@ function downloadTemplate() {
   document.body.removeChild(link)
 }
 
-async function importExcel(options) {
-  const file = options.file
+async function importExcel({ file }) {
   const form = new FormData()
-  form.append('file', file)
+  form.append('file', file.file)
   if (filter.subject_id) form.append('subject_id', String(filter.subject_id))
   if (filter.chapter_id) form.append('chapter_id', String(filter.chapter_id))
   if (filter.type_id) form.append('type_id', String(filter.type_id))
@@ -148,41 +224,17 @@ async function importExcel(options) {
     const resp = await http.post('/questions/import/excel', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
-    ElMessage.success(`导入完成：新增${resp.data.inserted}，跳过${resp.data.skipped}`)
+    message.success(`导入完成：新增${resp.data.inserted}，跳过${resp.data.skipped}`)
     await search()
   } catch (e) {
-    ElMessage.error(e?.message || '导入失败')
-  } finally {
-    options.onSuccess && options.onSuccess()
-  }
-}
-
-async function importWord(options) {
-  const file = options.file
-  const form = new FormData()
-  form.append('file', file)
-  if (filter.subject_id) form.append('subject_id', String(filter.subject_id))
-  if (filter.chapter_id) form.append('chapter_id', String(filter.chapter_id))
-  if (filter.type_id) form.append('type_id', String(filter.type_id))
-  if (filter.difficulty_id) form.append('difficulty_id', String(filter.difficulty_id))
-  form.append('create_user', 'import')
-  try {
-    const resp = await http.post('/questions/import/word', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-    ElMessage.success(`导入完成：新增${resp.data.inserted}，跳过${resp.data.skipped}`)
-    await search()
-  } catch (e) {
-    ElMessage.error(e?.message || '导入失败')
-  } finally {
-    options.onSuccess && options.onSuccess()
+    message.error(e?.message || '导入失败')
   }
 }
 
 function openCreate() {
-  dialog.mode = 'create'
+  questionDialog.mode = 'create'
   const user = getUser()
-  dialog.form = {
+  questionDialog.form = {
     question_id: null,
     subject_id: filter.subject_id || null,
     chapter_id: Array.isArray(filter.chapter_id) ? (filter.chapter_id[0] || null) : filter.chapter_id || null,
@@ -198,12 +250,12 @@ function openCreate() {
   dialogTextbookId.value = filter.textbook_id || null
   loadDialogTextbooks()
   loadDialogChapters()
-  dialog.visible = true
+  questionDialog.visible = true
 }
 
 async function openEdit(row) {
-  dialog.mode = 'edit'
-  dialog.form = {
+  questionDialog.mode = 'edit'
+  questionDialog.form = {
     question_id: row.question_id,
     subject_id: row.subject_id,
     chapter_id: row.chapter_id,
@@ -224,127 +276,114 @@ async function openEdit(row) {
     if (row.chapter_id) {
       const meta = await http.get(`/textbooks/chapters/${row.chapter_id}`)
       dialogTextbookId.value = meta.data?.item?.textbook_id || null
-      dialog.form.subject_id = row.subject_id
+      questionDialog.form.subject_id = row.subject_id
       await loadDialogTextbooks()
       await loadDialogChapters()
     }
   } catch {
     // ignore
   }
-  dialog.visible = true
+  questionDialog.visible = true
 }
 
 async function approve() {
   try {
     const user = getUser()
     await http.post('/ai/verify', {
-      question_id: dialog.form.question_id,
+      question_id: questionDialog.form.question_id,
       action: 'approve',
       reviewer: user ? user.name : 'manual'
     })
-    ElMessage.success('已审核通过')
-    dialog.visible = false
+    message.success('已审核通过')
+    questionDialog.visible = false
     await search()
   } catch (e) {
-    ElMessage.error(e?.message || '审核失败')
+    message.error(e?.message || '审核失败')
   }
 }
 
 async function submit() {
   try {
     if (
-      !dialog.form.subject_id ||
-      !dialog.form.chapter_id ||
-      !dialog.form.type_id ||
-      !dialog.form.difficulty_id ||
-      !dialog.form.question_content
+      !questionDialog.form.subject_id ||
+      !questionDialog.form.chapter_id ||
+      !questionDialog.form.type_id ||
+      !questionDialog.form.difficulty_id ||
+      !questionDialog.form.question_content
     ) {
-      ElMessage.error('科目/章节/题型/难度/题干必填')
+      message.error('科目/章节/题型/难度/题干必填')
       return
     }
-    if (dialog.mode === 'create') {
-      await http.post('/questions', { ...dialog.form })
+    if (questionDialog.mode === 'create') {
+      await http.post('/questions', { ...questionDialog.form })
     } else {
-      await http.put(`/questions/${dialog.form.question_id}`, {
-        subject_id: dialog.form.subject_id,
-        chapter_id: dialog.form.chapter_id,
-        type_id: dialog.form.type_id,
-        difficulty_id: dialog.form.difficulty_id,
-        question_content: dialog.form.question_content,
-        question_answer: dialog.form.question_answer,
-        question_analysis: dialog.form.question_analysis,
-        question_score: dialog.form.question_score,
+      await http.put(`/questions/${questionDialog.form.question_id}`, {
+        subject_id: questionDialog.form.subject_id,
+        chapter_id: questionDialog.form.chapter_id,
+        type_id: questionDialog.form.type_id,
+        difficulty_id: questionDialog.form.difficulty_id,
+        question_content: questionDialog.form.question_content,
+        question_answer: questionDialog.form.question_answer,
+        question_analysis: questionDialog.form.question_analysis,
+        question_score: questionDialog.form.question_score,
       })
     }
-    dialog.visible = false
+    questionDialog.visible = false
     await search()
   } catch (e) {
-    ElMessage.error(e?.message || '保存失败')
-  }
-}
-
-async function checkAndDelete(ids, isBatch = false) {
-  try {
-    const checkResp = await http.post('/questions/check-dependencies', { ids })
-    const deps = checkResp.data.dependencies || []
-    
-    if (deps.length > 0) {
-      const message = h('div', null, [
-        h('p', { style: 'margin-bottom: 10px; color: #E6A23C; font-weight: bold;' }, 
-          '⚠️ 警告：检测到选中的题目被以下试卷引用：'),
-        h('ul', { style: 'max-height: 200px; overflow-y: auto; padding-left: 20px; margin-bottom: 10px;' }, 
-          deps.map(d => h('li', `Q${d.question_id} 在 "${d.paper_name}" (第 ${d.question_sort} 题)`))
-        ),
-        h('p', { style: 'color: #F56C6C;' }, '如果删除，将会从这些试卷中同步移除该题目！'),
-        h('p', '是否确认继续删除？')
-      ])
-      
-      await ElMessageBox.confirm(message, '关联删除警告', {
-        type: 'warning',
-        confirmButtonText: '确认删除',
-        cancelButtonText: '取消',
-        confirmButtonClass: 'el-button--danger'
-      })
-    } else {
-      const count = ids.length
-      const text = isBatch ? `确认删除选中的 ${count} 个题目？` : `确认删除题目ID=${ids[0]}？`
-      await ElMessageBox.confirm(text, '提示', { type: 'warning' })
-    }
-
-    // Perform delete
-    if (isBatch) {
-      await http.post('/questions/batch-delete', { ids })
-      ElMessage.success('批量删除成功')
-    } else {
-      await http.delete(`/questions/${ids[0]}`)
-      ElMessage.success('删除成功')
-    }
-    await search()
-    // Clear selection if batch delete
-    if (isBatch) {
-      selectedIds.value = []
-    }
-  } catch (e) {
-    if (e !== 'cancel' && e !== 'close') {
-      ElMessage.error(e?.message || '操作失败')
-    }
+    message.error(e?.message || '保存失败')
   }
 }
 
 async function remove(row) {
-  await checkAndDelete([row.question_id], false)
+  dialog.warning({
+    title: '提示',
+    content: `确认删除题目ID=${row.question_id}？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await http.delete(`/questions/${row.question_id}`)
+        message.success('删除成功')
+        await search()
+      } catch (e) {
+        message.error(e?.message || '删除失败')
+      }
+    }
+  })
 }
 
 async function batchDelete() {
-  if (selectedIds.value.length === 0) return
-  await checkAndDelete(selectedIds.value, true)
+  if (checkedRowKeys.value.length === 0) return
+  dialog.warning({
+    title: '提示',
+    content: `确认删除选中的 ${checkedRowKeys.value.length} 个题目？`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await http.post('/questions/batch-delete', { ids: checkedRowKeys.value })
+        message.success('批量删除成功')
+        checkedRowKeys.value = []
+        await search()
+      } catch (e) {
+        message.error(e?.message || '操作失败')
+      }
+    }
+  })
 }
 
-function onSelectionChange(selection) {
-  selectedIds.value = selection.map((x) => x.question_id)
+const detailDialog = reactive({
+  visible: false,
+  item: null
+})
+
+function openDetail(row) {
+  detailDialog.item = row
+  detailDialog.visible = true
 }
 
-
+// AI Config Dialog
 const aiConfigDialog = reactive({
   visible: false,
   file: null,
@@ -354,27 +393,20 @@ const aiConfigDialog = reactive({
   }
 })
 
-const aiReviewDialog = reactive({
-  visible: false,
-  items: [],
-  loading: false
-})
+const aiDialogTextbooks = ref([])
 
-function onAiFileChange(file) {
+function onAiFileChange({ file }) {
   if (!file) return
-  // Reset form
   aiConfigDialog.form.subject_id = filter.subject_id || null
   aiConfigDialog.form.textbook_id = filter.textbook_id || null
-  aiConfigDialog.file = file.raw
+  aiConfigDialog.file = file.file
   aiConfigDialog.visible = true
   
-  // Trigger load if subject selected
   if (aiConfigDialog.form.subject_id) {
     loadDialogTextbooksForAi()
   }
 }
 
-const aiDialogTextbooks = ref([])
 async function loadDialogTextbooksForAi() {
   const resp = await http.get('/textbooks', {
     params: aiConfigDialog.form.subject_id ? { subject_id: aiConfigDialog.form.subject_id } : {},
@@ -384,7 +416,7 @@ async function loadDialogTextbooksForAi() {
 
 async function startParsing() {
   if (!aiConfigDialog.form.subject_id || !aiConfigDialog.form.textbook_id) {
-    ElMessage.error('请选择科目和教材')
+    message.error('请选择科目和教材')
     return
   }
   
@@ -392,13 +424,7 @@ async function startParsing() {
   const form = new FormData()
   form.append('file', file)
   form.append('subject_id', String(aiConfigDialog.form.subject_id))
-  // form.append('textbook_id', String(aiConfigDialog.form.textbook_id)) // 后端可能不需要，或者只是为了上下文
-  // 注意：后端目前没有接收 textbook_id，但接收 subject_id, chapter_id 等。
-  // 用户说“选择完之后手动的为AI解析出来的题目依次设置...章节”
-  // 所以解析时不需要传章节，也不需要传题型/难度（或者传默认值）
-  
-  // 传默认值避免后端校验失败（虽然我已经注释了校验，但为了保险）
-  form.append('chapter_id', '0') 
+  form.append('chapter_id', '0')
   form.append('type_id', '0')
   form.append('difficulty_id', '0')
   form.append('create_user', 'ai_import')
@@ -411,11 +437,9 @@ async function startParsing() {
     })
     startStream(resp.data.job_id)
   } catch (e) {
-    ElMessage.error(e?.message || '启动解析失败')
+    message.error(e?.message || '启动解析失败')
   }
 }
-
-// ---------------------------------------------------------------------
 
 // Stream related
 const stream = reactive({
@@ -430,7 +454,6 @@ const stream = reactive({
   currentStage: '',
 })
 const streamBodyRef = ref(null)
-let eventSource = null
 let typingTimer = null
 let pollingTimer = null
 let outputQueue = ''
@@ -473,7 +496,6 @@ function enqueueOutput(text) {
         stream.output = stream.output.slice(stream.output.length - 200000)
       }
       
-      // Update progress
       if (stream.totalCount > 0) {
         const matches = stream.output.match(/"question_analysis"/g)
         const count = matches ? matches.length : 0
@@ -489,10 +511,6 @@ function enqueueOutput(text) {
 }
 
 function stopStream() {
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
-  }
   if (pollingTimer) {
     clearInterval(pollingTimer)
     pollingTimer = null
@@ -550,7 +568,7 @@ function startStream(jobId) {
             
             const items = job.items || []
             if (items.length === 0) {
-                 ElMessage.warning('未能解析出题目')
+                 message.warning('未能解析出题目')
             } else {
                  openReviewDialog(items)
             }
@@ -573,32 +591,23 @@ function startStream(jobId) {
 }
 
 // AI Review Logic
-const aiReviewChapterTree = ref([])
-
-const detailDialog = reactive({
+const aiReviewDialog = reactive({
   visible: false,
-  item: null
+  items: [],
+  loading: false
 })
-
-function openDetail(row) {
-  detailDialog.item = row
-  detailDialog.visible = true
-}
+const aiReviewChapterTree = ref([])
 
 async function openReviewDialog(items) {
   aiReviewDialog.items = items.map(it => ({
       ...it,
-      // Ensure IDs are mapped if backend returned defaults
-      subject_id: aiConfigDialog.form.subject_id, // Use selected subject
-      // chapter/type/difficulty might be 0 or None from backend
+      subject_id: aiConfigDialog.form.subject_id,
       chapter_id: it.chapter_id || null,
       type_id: it.type_id || null,
       difficulty_id: it.difficulty_id || null,
-      // Add UI state
       _error: false
   }))
   
-  // Load chapter tree for the selected textbook
   if (aiConfigDialog.form.textbook_id) {
       const resp = await http.get(`/textbooks/${aiConfigDialog.form.textbook_id}/chapters`)
       aiReviewChapterTree.value = resp.data.tree || []
@@ -608,7 +617,6 @@ async function openReviewDialog(items) {
 }
 
 async function saveParsedQuestions() {
-    // Validate
     let hasError = false
     for (const item of aiReviewDialog.items) {
         if (!item.chapter_id || !item.type_id || !item.difficulty_id) {
@@ -620,26 +628,24 @@ async function saveParsedQuestions() {
     }
     
     if (hasError) {
-        ElMessage.error('请为所有题目设置章节、题型和难度（标红项）')
+        message.error('请为所有题目设置章节、题型和难度（标红项）')
         return
     }
     
     aiReviewDialog.loading = true
     try {
         const resp = await http.post('/questions/batch-create', { items: aiReviewDialog.items })
-        ElMessage.success(`成功入库 ${resp.data.inserted_count} 道题目`)
+        message.success(`成功入库 ${resp.data.inserted_count} 道题目`)
         aiReviewDialog.visible = false
-        // Switch to pending review tab
         filter.review_status = 0
         search()
     } catch (e) {
-        ElMessage.error(e?.message || '保存失败')
+        message.error(e?.message || '保存失败')
     } finally {
         aiReviewDialog.loading = false
     }
 }
 
-// Batch set functions
 const batchSet = reactive({
     chapter_id: null,
     type_id: null,
@@ -652,404 +658,452 @@ function applyBatchSet() {
         if (batchSet.type_id) item.type_id = batchSet.type_id
         if (batchSet.difficulty_id) item.difficulty_id = batchSet.difficulty_id
     }
-    ElMessage.success('已应用批量设置')
+    message.success('已应用批量设置')
 }
-
-// Removed old importWordAi
-// async function importWordAi(options) { ... } 
 
 onMounted(async () => {
   await loadDicts()
   await loadTextbooks()
   await search()
 })
+
+// Computed options
+const subjectOptions = computed(() => subjects.value.map(s => ({ label: s.subject_name, value: s.subject_id })))
+const textbookOptions = computed(() => textbooks.value.map(t => ({ label: t.textbook_name + (t.author ? '-' + t.author : ''), value: t.textbook_id })))
+const typeOptions = computed(() => types.value.map(t => ({ label: t.type_name, value: t.type_id })))
+const difficultyOptions = computed(() => difficulties.value.map(d => ({ label: d.difficulty_name, value: d.difficulty_id })))
+const dialogTextbookOptions = computed(() => dialogTextbooks.value.map(t => ({ label: t.textbook_name + (t.author ? '-' + t.author : ''), value: t.textbook_id })))
+const aiDialogTextbookOptions = computed(() => aiDialogTextbooks.value.map(t => ({ label: t.textbook_name + (t.author ? '-' + t.author : ''), value: t.textbook_id })))
+
+const reviewStatusOptions = [
+  { label: '已通过', value: 1 },
+  { label: '待审核', value: 0 },
+  { label: '已拒绝', value: 2 }
+]
+
+// Chapter tree to cascader options
+function treeToOptions(tree) {
+  return tree.map(node => ({
+    label: node.chapter_name,
+    value: node.chapter_id,
+    children: node.children && node.children.length > 0 ? treeToOptions(node.children) : undefined
+  }))
+}
+
+const chapterCascaderOptions = computed(() => treeToOptions(chapterTree.value))
+const dialogChapterCascaderOptions = computed(() => treeToOptions(dialogChapterTree.value))
+const aiReviewChapterCascaderOptions = computed(() => treeToOptions(aiReviewChapterTree.value))
+
+// Table columns
+const tableColumns = [
+  { type: 'selection' },
+  { title: 'ID', key: 'question_id', width: 80 },
+  { title: '科目', key: 'subject_name', width: 120 },
+  { title: '章节', key: 'chapter_name', width: 180, ellipsis: { tooltip: true } },
+  { title: '题型', key: 'type_name', width: 100 },
+  { title: '难度', key: 'difficulty_name', width: 80 },
+  {
+    title: '题干',
+    key: 'question_content',
+    ellipsis: { tooltip: true },
+    render(row) {
+      return h('div', {
+        style: { cursor: 'pointer', color: 'var(--n-text-color)' },
+        onClick: () => openDetail(row)
+      }, row.question_content?.substring(0, 100))
+    }
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 150,
+    render(row) {
+      return h('div', { style: { display: 'flex', gap: '4px' } }, [
+        h(NButton, { size: 'small', onClick: () => openEdit(row) }, { default: () => '编辑' }),
+        h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' })
+      ])
+    }
+  }
+]
+
+function handlePageChange(page) {
+  filter.page = page
+  search()
+}
+
+function handlePageSizeChange(pageSize) {
+  filter.page_size = pageSize
+  filter.page = 1
+  search()
+}
 </script>
 
 <template>
   <div class="page">
-    <div class="toolbar">
-      <div class="filters">
-        <el-input v-model="filter.q" placeholder="关键词（题干/解析）" style="width: 220px" clearable @keyup.enter="search" />
-        <el-select
-          v-model="filter.subject_id"
-          clearable
-          placeholder="科目"
-          style="width: 160px"
-          @change="
-            async () => {
-              filter.textbook_id = null
-              filter.chapter_id = []
-              await loadTextbooks()
-              await search()
-            }
-          "
-        >
-          <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
-        </el-select>
+    <n-alert v-if="error" type="error" :title="error" />
 
-        <el-select
-          v-model="filter.textbook_id"
-          clearable
-          placeholder="教材"
-          style="width: 220px"
-          @change="
-            async () => {
-              filter.chapter_id = []
-              await loadChapters()
-            }
-          "
-          @current-change="search"
-        >
-          <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? '-' + t.author : '')" :value="t.textbook_id" />
-        </el-select>
+    <n-card>
+      <template #header>
+        <div class="header">
+          <div>题目筛选</div>
+          <div class="actions">
+            <n-button type="error" :disabled="checkedRowKeys.length === 0" @click="batchDelete">
+              <template #icon><n-icon><TrashOutline /></n-icon></template>
+              批量删除
+            </n-button>
+            <n-button @click="downloadTemplate">
+              <template #icon><n-icon><DownloadOutline /></n-icon></template>
+              下载模板
+            </n-button>
+            <n-upload :custom-request="importExcel" accept=".xlsx,.xls" :show-file-list="false">
+              <n-button>
+                <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
+                Excel导入
+              </n-button>
+            </n-upload>
+            <n-upload :custom-request="onAiFileChange" accept=".docx,.pdf" :show-file-list="false">
+              <n-button type="warning">
+                <template #icon><n-icon><PlayOutline /></n-icon></template>
+                AI智能导入
+              </n-button>
+            </n-upload>
+            <n-button type="primary" @click="openCreate">
+              <template #icon><n-icon><AddOutline /></n-icon></template>
+              新增题目
+            </n-button>
+          </div>
+        </div>
+      </template>
 
-        <el-tree-select
-          v-model="filter.chapter_id"
-          :data="chapterTree"
-          :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
-          node-key="chapter_id"
-          multiple
-          show-checkbox
-          collapse-tags
-          collapse-tags-tooltip
-          clearable
-          placeholder="章节（多选）"
-          style="width: 220px"
-          @change="search"
-        />
+      <!-- 筛选区域：标签式布局 -->
+      <div class="filter-section">
+        <div class="filter-row">
+          <div class="filter-label">关键词</div>
+          <div class="filter-content">
+            <n-input v-model:value="filter.q" placeholder="题干/解析" style="width: 200px" clearable @keyup.enter="search" />
+          </div>
+        </div>
 
-        <el-select v-model="filter.type_id" clearable placeholder="题型" style="width: 120px" @change="search">
-          <el-option v-for="t in types" :key="t.type_id" :label="t.type_name" :value="t.type_id" />
-        </el-select>
+        <div class="filter-row">
+          <div class="filter-label">科目</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="s in subjects"
+              :key="s.subject_id"
+              :bordered="false"
+              :class="['filter-tag', filter.subject_id === s.subject_id ? 'tag-selected' : '']"
+              @click="async () => {
+                filter.subject_id = filter.subject_id === s.subject_id ? null : s.subject_id;
+                filter.textbook_id = null;
+                filter.chapter_id = [];
+                await loadTextbooks();
+                await search()
+              }"
+            >
+              {{ s.subject_name }}
+            </n-tag>
+          </div>
+        </div>
 
-        <el-select v-model="filter.difficulty_id" clearable placeholder="难度" style="width: 120px" @change="search">
-          <el-option v-for="d in difficulties" :key="d.difficulty_id" :label="d.difficulty_name" :value="d.difficulty_id" />
-        </el-select>
+        <div class="filter-row" v-if="textbooks.length > 0">
+          <div class="filter-label">教材</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="t in textbooks"
+              :key="t.textbook_id"
+              :bordered="false"
+              :class="['filter-tag', filter.textbook_id === t.textbook_id ? 'tag-selected' : '']"
+              @click="async () => {
+                filter.textbook_id = filter.textbook_id === t.textbook_id ? null : t.textbook_id;
+                filter.chapter_id = [];
+                selectedMainChapters = [];
+                await loadChapters()
+              }"
+            >
+              {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
+            </n-tag>
+          </div>
+        </div>
 
-        <el-select v-model="filter.review_status" clearable placeholder="审核状态" style="width: 120px" @change="search">
-          <el-option label="已通过" :value="1" />
-          <el-option label="待审核" :value="0" />
-          <el-option label="已拒绝" :value="2" />
-        </el-select>
+        <!-- 大章节选择 -->
+        <div class="filter-row" v-if="chapterTree.length > 0">
+          <div class="filter-label">章节</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="chapter in chapterTree"
+              :key="chapter.chapter_id"
+              :bordered="false"
+              :class="['filter-tag', 'chapter-main', selectedMainChapters.includes(chapter.chapter_id) ? 'chapter-main-selected' : '']"
+              @click="toggleMainChapter(chapter)"
+            >
+              {{ chapter.chapter_name }}
+            </n-tag>
+          </div>
+        </div>
 
-        <el-button type="default" @click="search" :icon="Search">查询</el-button>
+        <!-- 小章节选择（按大章节分组显示） -->
+        <div class="filter-row sub-chapters-row" v-if="visibleSubChapterGroups.length > 0">
+          <div class="filter-label">小节</div>
+          <div class="filter-content">
+            <div class="sub-chapters-container">
+              <div v-for="group in visibleSubChapterGroups" :key="group.parent.chapter_id" class="sub-chapter-group">
+                <span class="sub-chapter-group-label">{{ group.parent.chapter_name }}：</span>
+                <div class="sub-chapter-tags">
+                  <n-tag
+                    v-for="sub in group.children"
+                    :key="sub.chapter_id"
+                    :bordered="false"
+                    :class="['filter-tag', 'chapter-sub', filter.chapter_id.includes(sub.chapter_id) ? 'chapter-sub-selected' : '']"
+                    @click="toggleSubChapter(sub.chapter_id)"
+                  >
+                    {{ sub.chapter_name }}
+                  </n-tag>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="filter-row">
+          <div class="filter-label">题型</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="t in types"
+              :key="t.type_id"
+              :bordered="false"
+              :class="['filter-tag', filter.type_id === t.type_id ? 'tag-selected' : '']"
+              @click="() => { filter.type_id = filter.type_id === t.type_id ? null : t.type_id; search() }"
+            >
+              {{ t.type_name }}
+            </n-tag>
+          </div>
+        </div>
+
+        <div class="filter-row">
+          <div class="filter-label">难度</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="d in difficulties"
+              :key="d.difficulty_id"
+              :bordered="false"
+              :class="['filter-tag', 'difficulty-tag', getDifficultyClass(d.difficulty_id, d.difficulty_name)]"
+              @click="() => { filter.difficulty_id = filter.difficulty_id === d.difficulty_id ? null : d.difficulty_id; search() }"
+            >
+              {{ d.difficulty_name }}
+            </n-tag>
+          </div>
+        </div>
+
+        <div class="filter-row">
+          <div class="filter-label">状态</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="s in reviewStatusOptions"
+              :key="s.value"
+              :bordered="false"
+              :class="['filter-tag', filter.review_status === s.value ? 'tag-selected' : '']"
+              @click="() => { filter.review_status = filter.review_status === s.value ? null : s.value; search() }"
+            >
+              {{ s.label }}
+            </n-tag>
+            <n-button size="small" style="margin-left: 12px" @click="search">
+              <template #icon><n-icon><SearchOutline /></n-icon></template>
+              查询
+            </n-button>
+          </div>
+        </div>
       </div>
 
-      <div class="rightActions">
-        <el-button type="danger" plain @click="batchDelete" :disabled="selectedIds.length === 0" :icon="Delete">批量删除</el-button>
-        <el-button type="success" @click="downloadTemplate" :icon="Download">下载模板</el-button>
-        <el-upload
-          action=""
-          :show-file-list="false"
-          accept=".xlsx,.xls"
-          :http-request="importExcel"
-          style="display: inline-flex; margin-right: 10px"
-        >
-          <el-button :icon="Upload">Excel导入</el-button>
-        </el-upload>
-        <el-upload
-          action=""
-          :show-file-list="false"
-          accept=".docx,.pdf"
-          :auto-upload="false"
-          :on-change="onAiFileChange"
-          style="display: inline-flex; margin-right: 10px"
-        >
-          <el-button :icon="VideoPlay" type="warning" plain>AI智能导入</el-button>
-        </el-upload>
-        <el-button type="primary" @click="openCreate" :icon="Plus">新增题目</el-button>
-      </div>
-    </div>
-
-    <el-alert v-if="error" :title="error" type="error" show-icon />
-
-    <el-card>
-      <el-table :data="data.items" :loading="loading" height="560" @selection-change="onSelectionChange">
-        <el-table-column type="selection" width="55" />
-        <el-table-column prop="question_id" label="ID" width="100" />
-        <el-table-column label="科目" width="140">
-          <template #default="{ row }">
-            {{ row.subject_name || row.subject_id }}
-          </template>
-        </el-table-column>
-        <el-table-column label="章节" width="220">
-          <template #default="{ row }">
-            {{ row.chapter_name || row.chapter_id }}
-          </template>
-        </el-table-column>
-        <el-table-column label="题型" width="140">
-          <template #default="{ row }">
-            {{ row.type_name || row.type_id }}
-          </template>
-        </el-table-column>
-        <el-table-column label="难度" width="120">
-          <template #default="{ row }">
-            {{ row.difficulty_name || row.difficulty_id }}
-          </template>
-        </el-table-column>
-        <el-table-column label="题干" min-width="320">
-          <template #default="{ row }">
-            <div class="contentCell" @click="openDetail(row)" title="点击查看详情">{{ row.question_content }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column fixed="right" label="操作" width="180">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)" :icon="Edit">编辑</el-button>
-            <el-button link type="danger" @click="remove(row)" :icon="Delete">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <n-data-table
+        :columns="tableColumns"
+        :data="data.items"
+        :loading="loading"
+        :max-height="560"
+        :row-key="row => row.question_id"
+        v-model:checked-row-keys="checkedRowKeys"
+      />
       <div class="pager">
-        <el-pagination
-          v-model:current-page="filter.page"
+        <n-pagination
+          v-model:page="filter.page"
           v-model:page-size="filter.page_size"
-          :total="data.total"
+          :item-count="data.total"
           :page-sizes="[10, 20, 50, 100]"
-          layout="total, sizes, prev, pager, next"
-          @size-change="
-            () => {
-              filter.page = 1
-              search()
-            }
-          "
-          @current-change="search"
+          show-size-picker
+          @update:page="handlePageChange"
+          @update:page-size="handlePageSizeChange"
         />
       </div>
-    </el-card>
+    </n-card>
 
-    <el-dialog v-model="dialog.visible" :title="dialog.mode === 'create' ? '新增题目' : '编辑题目'" width="720px">
-      <el-form label-width="90px">
-        <el-form-item label="科目">
-          <el-select
-            v-model="dialog.form.subject_id"
+    <!-- Question Dialog -->
+    <n-modal v-model:show="questionDialog.visible" preset="card" :title="questionDialog.mode === 'create' ? '新增题目' : '编辑题目'" style="width: 720px">
+      <n-form label-placement="left" label-width="90px">
+        <n-form-item label="科目">
+          <n-select
+            v-model:value="questionDialog.form.subject_id"
+            :options="subjectOptions"
             placeholder="科目"
-            style="width: 100%"
             filterable
-            @change="
-              async () => {
-                dialogTextbookId = null
-                dialog.form.chapter_id = null
-                dialogChapterTree = []
-                await loadDialogTextbooks()
-              }
-            "
-          >
-            <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="教材">
-          <el-select
-            v-model="dialogTextbookId"
+            @update:value="async () => {
+              dialogTextbookId = null
+              questionDialog.form.chapter_id = null
+              dialogChapterTree = []
+              await loadDialogTextbooks()
+            }"
+          />
+        </n-form-item>
+        <n-form-item label="教材">
+          <n-select
+            v-model:value="dialogTextbookId"
+            :options="dialogTextbookOptions"
             placeholder="教材"
-            style="width: 100%"
             filterable
             clearable
-            @change="
-              async () => {
-                dialog.form.chapter_id = null
-                await loadDialogChapters()
-              }
-            "
-          >
-            <el-option v-for="t in dialogTextbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? '-' + t.author : '')" :value="t.textbook_id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="章节">
-          <el-tree-select
-            v-model="dialog.form.chapter_id"
-            :data="dialogChapterTree"
-            :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
-            node-key="chapter_id"
-            check-strictly
+            @update:value="async () => {
+              questionDialog.form.chapter_id = null
+              await loadDialogChapters()
+            }"
+          />
+        </n-form-item>
+        <n-form-item label="章节">
+          <n-cascader
+            v-model:value="questionDialog.form.chapter_id"
+            :options="dialogChapterCascaderOptions"
+            check-strategy="child"
             clearable
             placeholder="章节"
-            style="width: 100%"
             :disabled="!dialogTextbookId"
           />
-        </el-form-item>
-        <el-form-item label="题型">
-          <el-select v-model="dialog.form.type_id" placeholder="题型" style="width: 100%" filterable>
-            <el-option v-for="t in types" :key="t.type_id" :label="t.type_name" :value="t.type_id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="难度">
-          <el-select v-model="dialog.form.difficulty_id" placeholder="难度" style="width: 100%" filterable>
-            <el-option v-for="d in difficulties" :key="d.difficulty_id" :label="d.difficulty_name" :value="d.difficulty_id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="分值">
-          <el-input-number v-model="dialog.form.question_score" :min="0" :step="0.5" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="题干">
-          <el-input v-model="dialog.form.question_content" type="textarea" :rows="5" />
-        </el-form-item>
-        <el-form-item label="答案">
-          <el-input v-model="dialog.form.question_answer" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="解析">
-          <el-input v-model="dialog.form.question_analysis" type="textarea" :rows="3" />
-        </el-form-item>
-        <el-form-item label="审核人" v-if="dialog.mode === 'edit'">
-          <el-input v-model="dialog.form.reviewer" disabled />
-        </el-form-item>
-      </el-form>
+        </n-form-item>
+        <n-form-item label="题型">
+          <n-select v-model:value="questionDialog.form.type_id" :options="typeOptions" placeholder="题型" filterable />
+        </n-form-item>
+        <n-form-item label="难度">
+          <n-select v-model:value="questionDialog.form.difficulty_id" :options="difficultyOptions" placeholder="难度" filterable />
+        </n-form-item>
+        <n-form-item label="分值">
+          <n-input-number v-model:value="questionDialog.form.question_score" :min="0" :step="0.5" style="width: 100%" />
+        </n-form-item>
+        <n-form-item label="题干">
+          <n-input v-model:value="questionDialog.form.question_content" type="textarea" :rows="5" />
+        </n-form-item>
+        <n-form-item label="答案">
+          <n-input v-model:value="questionDialog.form.question_answer" type="textarea" :rows="2" />
+        </n-form-item>
+        <n-form-item label="解析">
+          <n-input v-model:value="questionDialog.form.question_analysis" type="textarea" :rows="3" />
+        </n-form-item>
+        <n-form-item v-if="questionDialog.mode === 'edit'" label="审核人">
+          <n-input v-model:value="questionDialog.form.reviewer" disabled />
+        </n-form-item>
+      </n-form>
       <template #footer>
-        <el-button @click="dialog.visible = false">取消</el-button>
-        <el-button v-if="dialog.mode === 'edit' && dialog.form.review_status === 0" type="success" @click="approve">审核通过</el-button>
-        <el-button type="primary" @click="submit">保存</el-button>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <n-button @click="questionDialog.visible = false">取消</n-button>
+          <n-button v-if="questionDialog.mode === 'edit' && questionDialog.form.review_status === 0" type="success" @click="approve">审核通过</n-button>
+          <n-button type="primary" @click="submit">保存</n-button>
+        </div>
       </template>
-    </el-dialog>
+    </n-modal>
 
     <!-- AI Config Dialog -->
-    <el-dialog v-model="aiConfigDialog.visible" title="AI导入设置" width="500px">
-      <el-form label-width="80px">
-        <el-form-item label="已选文件">
+    <n-modal v-model:show="aiConfigDialog.visible" preset="card" title="AI导入设置" style="width: 500px">
+      <n-form label-placement="left" label-width="80px">
+        <n-form-item label="已选文件">
           <div>{{ aiConfigDialog.file?.name }}</div>
-        </el-form-item>
-        <el-form-item label="科目">
-          <el-select
-            v-model="aiConfigDialog.form.subject_id"
+        </n-form-item>
+        <n-form-item label="科目">
+          <n-select
+            v-model:value="aiConfigDialog.form.subject_id"
+            :options="subjectOptions"
             placeholder="请选择科目"
-            style="width: 100%"
-            @change="
-              async () => {
-                aiConfigDialog.form.textbook_id = null
-                await loadDialogTextbooksForAi()
-              }
-            "
-          >
-            <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="教材">
-          <el-select
-            v-model="aiConfigDialog.form.textbook_id"
+            @update:value="async () => {
+              aiConfigDialog.form.textbook_id = null
+              await loadDialogTextbooksForAi()
+            }"
+          />
+        </n-form-item>
+        <n-form-item label="教材">
+          <n-select
+            v-model:value="aiConfigDialog.form.textbook_id"
+            :options="aiDialogTextbookOptions"
             placeholder="请选择教材"
-            style="width: 100%"
-          >
-            <el-option v-for="t in aiDialogTextbooks" :key="t.textbook_id" :label="t.textbook_name + (t.author ? '-' + t.author : '')" :value="t.textbook_id" />
-          </el-select>
-        </el-form-item>
-      </el-form>
+          />
+        </n-form-item>
+      </n-form>
       <template #footer>
-        <el-button @click="aiConfigDialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="startParsing">开始解析</el-button>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <n-button @click="aiConfigDialog.visible = false">取消</n-button>
+          <n-button type="primary" @click="startParsing">开始解析</n-button>
+        </div>
       </template>
-    </el-dialog>
+    </n-modal>
 
     <!-- AI Review Dialog -->
-    <el-dialog v-model="aiReviewDialog.visible" title="AI解析结果确认" width="90%" :close-on-click-modal="false">
-        <div style="margin-bottom: 10px; padding: 10px; background: #f5f7fa; border-radius: 4px; display: flex; align-items: center; gap: 10px;">
+    <n-modal v-model:show="aiReviewDialog.visible" preset="card" title="AI解析结果确认" style="width: 90%" :close-on-esc="false" :mask-closable="false">
+        <div style="margin-bottom: 10px; padding: 10px; background: var(--n-color-modal); border-radius: 4px; display: flex; align-items: center; gap: 10px;">
             <span style="font-weight: bold; font-size: 14px;">批量设置：</span>
-            <el-select v-model="batchSet.type_id" placeholder="题型" style="width: 120px" clearable>
-                <el-option v-for="t in types" :key="t.type_id" :label="t.type_name" :value="t.type_id" />
-            </el-select>
-            <el-select v-model="batchSet.difficulty_id" placeholder="难度" style="width: 120px" clearable>
-                <el-option v-for="d in difficulties" :key="d.difficulty_id" :label="d.difficulty_name" :value="d.difficulty_id" />
-            </el-select>
-            <el-tree-select
-                v-model="batchSet.chapter_id"
-                :data="aiReviewChapterTree"
-                :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
-                node-key="chapter_id"
-                check-strictly
+            <n-select v-model:value="batchSet.type_id" :options="typeOptions" placeholder="题型" style="width: 120px" clearable />
+            <n-select v-model:value="batchSet.difficulty_id" :options="difficultyOptions" placeholder="难度" style="width: 120px" clearable />
+            <n-cascader
+                v-model:value="batchSet.chapter_id"
+                :options="aiReviewChapterCascaderOptions"
+                check-strategy="child"
                 placeholder="章节"
                 style="width: 200px"
                 clearable
             />
-            <el-button type="primary" link @click="applyBatchSet">应用到所有</el-button>
+            <n-button type="primary" text @click="applyBatchSet">应用到所有</n-button>
         </div>
 
-        <el-table :data="aiReviewDialog.items" height="500px" border stripe>
-            <el-table-column type="index" label="#" width="50" />
-            <el-table-column label="题干" min-width="300">
-                <template #default="{ row }">
-                    <el-input v-model="row.question_content" type="textarea" :autosize="{ minRows: 2, maxRows: 10 }" />
-                </template>
-            </el-table-column>
-            <el-table-column label="答案" width="150">
-                <template #default="{ row }">
-                    <el-input v-model="row.question_answer" type="textarea" :autosize="{ minRows: 2, maxRows: 10 }" />
-                </template>
-            </el-table-column>
-            <el-table-column label="解析" width="200">
-                <template #default="{ row }">
-                    <el-input v-model="row.question_analysis" type="textarea" :autosize="{ minRows: 2, maxRows: 10 }" />
-                </template>
-            </el-table-column>
-            <el-table-column label="分值" width="120">
-                <template #default="{ row }">
-                    <el-input-number v-model="row.question_score" :min="0" :step="0.5" controls-position="right" style="width: 100%" />
-                </template>
-            </el-table-column>
-            
-            <!-- Configurable Fields -->
-            <el-table-column label="题型" width="130">
-                <template #default="{ row }">
-                    <el-select v-model="row.type_id" :class="{ 'is-error': row._error && !row.type_id }" placeholder="请选择">
-                        <el-option v-for="t in types" :key="t.type_id" :label="t.type_name" :value="t.type_id" />
-                    </el-select>
-                </template>
-            </el-table-column>
-            <el-table-column label="难度" width="110">
-                <template #default="{ row }">
-                    <el-select v-model="row.difficulty_id" :class="{ 'is-error': row._error && !row.difficulty_id }" placeholder="请选择">
-                        <el-option v-for="d in difficulties" :key="d.difficulty_id" :label="d.difficulty_name" :value="d.difficulty_id" />
-                    </el-select>
-                </template>
-            </el-table-column>
-            <el-table-column label="章节" width="200">
-                <template #default="{ row }">
-                    <el-tree-select
-                        v-model="row.chapter_id"
-                        :data="aiReviewChapterTree"
-                        :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
-                        node-key="chapter_id"
-                        check-strictly
-                        :class="{ 'is-error': row._error && !row.chapter_id }"
-                        style="width: 100%"
-                        placeholder="请选择"
-                    />
-                </template>
-            </el-table-column>
-            
-            <el-table-column label="操作" width="60" fixed="right">
-                <template #default="{ $index }">
-                    <el-button link type="danger" :icon="Delete" @click="aiReviewDialog.items.splice($index, 1)"></el-button>
-                </template>
-            </el-table-column>
-        </el-table>
-        
+        <n-data-table
+          :columns="[
+            { type: 'index', title: '#', width: 50 },
+            { title: '题干', key: 'question_content', ellipsis: { tooltip: true } },
+            { title: '答案', key: 'question_answer', width: 150 },
+            { title: '解析', key: 'question_analysis', width: 200 },
+            { title: '分值', key: 'question_score', width: 80 },
+            { title: '题型', key: 'type_id', width: 130, render: (row) => h(NSelect, { value: row.type_id, options: typeOptions.value, size: 'small', onUpdateValue: (v) => row.type_id = v }) },
+            { title: '难度', key: 'difficulty_id', width: 110, render: (row) => h(NSelect, { value: row.difficulty_id, options: difficultyOptions.value, size: 'small', onUpdateValue: (v) => row.difficulty_id = v }) },
+            { title: '章节', key: 'chapter_id', width: 200, render: (row) => h(NCascader, { value: row.chapter_id, options: aiReviewChapterCascaderOptions.value, checkStrategy: 'child', size: 'small', onUpdateValue: (v) => row.chapter_id = v }) }
+          ]"
+          :data="aiReviewDialog.items"
+          :max-height="500"
+          striped
+        />
+
         <template #footer>
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span>共 {{ aiReviewDialog.items.length }} 题</span>
-                <div>
-                    <el-button @click="aiReviewDialog.visible = false">取消</el-button>
-                    <el-button type="primary" :loading="aiReviewDialog.loading" @click="saveParsedQuestions">确认入库</el-button>
+                <div style="display: flex; gap: 8px;">
+                    <n-button @click="aiReviewDialog.visible = false">取消</n-button>
+                    <n-button type="primary" :loading="aiReviewDialog.loading" @click="saveParsedQuestions">确认入库</n-button>
                 </div>
             </div>
         </template>
-    </el-dialog>
+    </n-modal>
 
-    <el-dialog v-model="detailDialog.visible" title="题目详情" width="600px">
+    <!-- Detail Dialog -->
+    <n-modal v-model:show="detailDialog.visible" preset="card" title="题目详情" style="width: 600px">
       <div v-if="detailDialog.item">
-        <el-descriptions :column="1" border>
-          <el-descriptions-item label="题干">
+        <n-descriptions :column="1" bordered>
+          <n-descriptions-item label="题干">
             <div style="white-space: pre-wrap">{{ detailDialog.item.question_content }}</div>
-          </el-descriptions-item>
-          <el-descriptions-item label="答案">
+          </n-descriptions-item>
+          <n-descriptions-item label="答案">
             <div style="white-space: pre-wrap">{{ detailDialog.item.question_answer }}</div>
-          </el-descriptions-item>
-          <el-descriptions-item label="解析">
+          </n-descriptions-item>
+          <n-descriptions-item label="解析">
             <div style="white-space: pre-wrap">{{ detailDialog.item.question_analysis }}</div>
-          </el-descriptions-item>
-        </el-descriptions>
+          </n-descriptions-item>
+        </n-descriptions>
       </div>
       <template #footer>
-        <el-button @click="detailDialog.visible = false">关闭</el-button>
+        <n-button @click="detailDialog.visible = false">关闭</n-button>
       </template>
-    </el-dialog>
+    </n-modal>
 
+    <!-- Stream Panel -->
     <div v-if="stream.visible" class="streamPanel">
       <div class="streamHeader">
         <div class="streamTitle">
@@ -1057,8 +1111,14 @@ onMounted(async () => {
           <span class="streamMeta">ID: {{ stream.job_id }}（{{ stream.status }}）</span>
         </div>
         <div class="streamActions">
-          <el-button size="small" @click="stream.output = ''; stream.lines = []" :icon="Delete">清空</el-button>
-          <el-button size="small" @click="stream.visible = false" :icon="Close">关闭</el-button>
+          <n-button size="small" @click="stream.output = ''; stream.lines = []">
+            <template #icon><n-icon><TrashOutline /></n-icon></template>
+            清空
+          </n-button>
+          <n-button size="small" @click="stream.visible = false">
+            <template #icon><n-icon><CloseOutline /></n-icon></template>
+            关闭
+          </n-button>
         </div>
       </div>
 
@@ -1067,13 +1127,7 @@ onMounted(async () => {
           <span class="stage-text">{{ stream.currentStage }}</span>
           <span class="count-text">已解析入库 {{ stream.generatedCount }} 题</span>
         </div>
-        <el-progress 
-          :percentage="stream.progress" 
-          :stroke-width="8" 
-          striped 
-          striped-flow 
-          :duration="10"
-        />
+        <n-progress :percentage="stream.progress" :height="8" :show-indicator="false" />
       </div>
 
       <div ref="streamBodyRef" class="streamBody">
@@ -1098,43 +1152,202 @@ onMounted(async () => {
   gap: 12px;
 }
 
-.toolbar {
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* 标签式筛选区域样式 */
+.filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--n-color-embedded);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.filter-row {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 12px;
 }
 
-.filters {
+.filter-label {
+  flex-shrink: 0;
+  width: 60px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--n-text-color-2);
+  line-height: 28px;
+  text-align: right;
+}
+
+.filter-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.filter-tags {
   display: flex;
   flex-wrap: wrap;
+  gap: 8px;
   align-items: center;
+}
+
+/* 小节分组容器 */
+.sub-chapters-row .filter-content {
+  align-items: flex-start;
+}
+
+.sub-chapters-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.sub-chapter-group {
+  display: flex;
+  align-items: flex-start;
   gap: 10px;
 }
 
-.rightActions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.sub-chapter-group-label {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a5fb4;
+  line-height: 26px;
+  min-width: 100px;
 }
+
+.sub-chapter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.filter-tag {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 10px !important;
+  padding: 4px 14px !important;
+  font-size: 13px !important;
+  background: rgba(100, 116, 139, 0.08) !important;
+  color: #475569 !important;
+  border: 1px solid rgba(100, 116, 139, 0.2) !important;
+}
+
+.filter-tag:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* 统一选中样式 - 深蓝色渐变 */
+.tag-selected {
+  background: linear-gradient(135deg, #1a5fb4 0%, #2563eb 100%) !important;
+  color: white !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(26, 95, 180, 0.4) !important;
+}
+
+
+/* 大章节 - 深蓝色 */
+.chapter-main {
+  font-weight: 600 !important;
+  background: rgba(32, 128, 240, 0.1) !important;
+  color: #1a5fb4 !important;
+  border: 1px solid rgba(32, 128, 240, 0.3) !important;
+}
+
+.chapter-main-selected {
+  background: linear-gradient(135deg, #1a5fb4 0%, #2563eb 100%) !important;
+  color: white !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(26, 95, 180, 0.4) !important;
+}
+
+/* 子章节 - 浅蓝色 */
+.chapter-sub {
+  font-size: 12px !important;
+  padding: 3px 10px !important;
+  background: rgba(96, 165, 250, 0.08) !important;
+  color: #3b82f6 !important;
+  border: 1px solid rgba(96, 165, 250, 0.25) !important;
+}
+
+.chapter-sub-selected {
+  background: linear-gradient(135deg, #60a5fa 0%, #93c5fd 100%) !important;
+  color: white !important;
+  border: none !important;
+  box-shadow: 0 2px 6px rgba(96, 165, 250, 0.35) !important;
+}
+
+/* 难度颜色 */
+.difficulty-tag {
+  font-weight: 500 !important;
+}
+
+.difficulty-easy {
+  color: #18a058 !important;
+  border-color: #18a058 !important;
+  background: rgba(24, 160, 88, 0.08) !important;
+}
+
+.difficulty-easy-selected {
+  background: linear-gradient(135deg, #18a058 0%, #36ad6a 100%) !important;
+  color: white !important;
+  border: none !important;
+}
+
+.difficulty-medium {
+  color: #f0a020 !important;
+  border-color: #f0a020 !important;
+  background: rgba(240, 160, 32, 0.08) !important;
+}
+
+.difficulty-medium-selected {
+  background: linear-gradient(135deg, #f0a020 0%, #fcb040 100%) !important;
+  color: white !important;
+  border: none !important;
+}
+
+.difficulty-hard {
+  color: #d03050 !important;
+  border-color: #d03050 !important;
+  background: rgba(208, 48, 80, 0.08) !important;
+}
+
+.difficulty-hard-selected {
+  background: linear-gradient(135deg, #d03050 0%, #e88080 100%) !important;
+  color: white !important;
+  border: none !important;
+}
+
+.difficulty-default-selected {
+  background: linear-gradient(135deg, #2080f0 0%, #409eff 100%) !important;
+  color: white !important;
+  border: none !important;
+}
+
 
 .pager {
   display: flex;
   justify-content: flex-end;
   margin-top: 12px;
-}
-
-.contentCell {
-  max-height: 80px;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  white-space: pre-wrap;
-  cursor: pointer;
-}
-.contentCell:hover {
-  color: var(--el-color-primary);
 }
 
 .streamPanel {
@@ -1143,10 +1356,10 @@ onMounted(async () => {
   top: 86px;
   width: 520px;
   height: 70vh;
-  background-color: var(--el-bg-color);
-  border: 1px solid var(--el-border-color);
-  border-radius: 10px;
-  box-shadow: var(--el-box-shadow);
+  background-color: var(--n-card-color);
+  border: 1px solid var(--n-border-color);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
   z-index: 2000;
@@ -1157,7 +1370,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--el-border-color);
+  border-bottom: 1px solid var(--n-border-color);
 }
 
 .streamTitle {
@@ -1167,7 +1380,7 @@ onMounted(async () => {
 }
 
 .streamMeta {
-  color: var(--el-text-color-secondary);
+  color: var(--n-text-color-3);
   font-size: 12px;
 }
 
@@ -1178,8 +1391,7 @@ onMounted(async () => {
 
 .streamProgress {
   padding: 10px 12px;
-  background-color: var(--el-bg-color-page);
-  border-bottom: 1px solid var(--el-border-color);
+  border-bottom: 1px solid var(--n-border-color);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1189,16 +1401,15 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   font-size: 13px;
-  color: var(--el-text-color-regular);
 }
 
 .stage-text {
   font-weight: 500;
-  color: var(--el-color-primary);
+  color: var(--n-primary-color);
 }
 
 .count-text {
-  color: var(--el-text-color-secondary);
+  color: var(--n-text-color-3);
 }
 
 .streamBody {
@@ -1208,15 +1419,14 @@ onMounted(async () => {
 }
 
 .streamLines {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-family: monospace;
   font-size: 12px;
   white-space: pre-wrap;
-  color: var(--el-text-color-regular);
   margin-bottom: 12px;
 }
 
 .streamHint {
-  color: var(--el-text-color-secondary);
+  color: var(--n-text-color-3);
   font-size: 12px;
 }
 
@@ -1229,12 +1439,7 @@ onMounted(async () => {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-family: monospace;
   font-size: 12px;
-  color: var(--el-text-color-regular);
-}
-
-.is-error :deep(.el-input__wrapper) {
-    box-shadow: 0 0 0 1px var(--el-color-danger) inset;
 }
 </style>

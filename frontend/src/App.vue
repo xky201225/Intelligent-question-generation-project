@@ -1,7 +1,28 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { SwitchButton, Edit, CopyDocument, Document, Check, Stamp } from '@element-plus/icons-vue'
+import { NIcon, NConfigProvider, darkTheme, zhCN, dateZhCN } from 'naive-ui'
+import {
+  LogOutOutline,
+  BookOutline,
+  DocumentTextOutline,
+  CheckmarkCircleOutline,
+  LayersOutline,
+  FileTrayFullOutline,
+  SettingsOutline,
+  CreateOutline,
+  CopyOutline,
+  DocumentOutline,
+  CheckmarkOutline,
+  FlashOutline,
+  NewspaperOutline,
+  RibbonOutline,
+  TicketOutline,
+  SunnyOutline,
+  MoonOutline,
+  WifiOutline,
+  CloudOfflineOutline
+} from '@vicons/ionicons5'
 import { http } from './api/http'
 import { clearAuth, getUser } from './auth'
 
@@ -10,14 +31,64 @@ const route = useRoute()
 const router = useRouter()
 const user = ref(getUser())
 
+const isDarkMode = ref(false)
+const collapsed = ref(true) // 默认折叠
+let themeMediaQuery = null
+let themeMediaListener = null
+
+// 主题色 - 蓝色
+const primaryColor = '#2080f0'
+
+// 主题覆盖配置
+const themeOverrides = computed(() => ({
+  common: {
+    primaryColor: primaryColor,
+    primaryColorHover: '#4098fc',
+    primaryColorPressed: '#1060c9',
+    primaryColorSuppl: primaryColor
+  }
+}))
+
+function applyTheme(nextIsDark) {
+  const mode = nextIsDark ? 'dark' : 'light'
+  document.documentElement.dataset.theme = mode
+  localStorage.setItem('theme', mode)
+  const metaColorScheme = document.querySelector('meta[name="color-scheme"]')
+  if (metaColorScheme) {
+    metaColorScheme.content = mode
+  }
+}
+
+function initTheme() {
+  const saved = localStorage.getItem('theme')
+  if (saved === 'dark' || saved === 'light') {
+    isDarkMode.value = saved === 'dark'
+    applyTheme(isDarkMode.value)
+    return
+  }
+
+  themeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+  isDarkMode.value = themeMediaQuery.matches
+  applyTheme(isDarkMode.value)
+  themeMediaListener = (e) => {
+    if (localStorage.getItem('theme')) return
+    isDarkMode.value = e.matches
+    applyTheme(isDarkMode.value)
+  }
+  themeMediaQuery.addEventListener('change', themeMediaListener)
+}
+
+function toggleTheme() {
+  isDarkMode.value = !isDarkMode.value
+  applyTheme(isDarkMode.value)
+}
+
 let timer = null
 
 const isLoginPage = computed(() => route.path === '/login')
 
 async function checkHealth() {
   try {
-    // 假设后端有 /api/health 接口
-    // 如果没有，可以调用 /dicts/subjects 等轻量接口替代
     await http.get('/health', { timeout: 3000 })
     apiStatus.value = 'success'
   } catch (e) {
@@ -31,9 +102,65 @@ async function logout() {
   await router.push('/login')
 }
 
+const renderIcon = (icon) => {
+  return () => h(NIcon, null, { default: () => h(icon) })
+}
+
+const menuOptions = computed(() => [
+  {
+    label: '基础信息',
+    key: '/dicts',
+    icon: renderIcon(SettingsOutline)
+  },
+  {
+    label: '智能出题',
+    key: '/ai-review',
+    icon: renderIcon(FlashOutline),
+    children: [
+      { label: 'AI出题', key: '/ai-review/text', icon: renderIcon(CreateOutline) },
+      { label: '试卷变式', key: '/ai-review/paper', icon: renderIcon(CopyOutline) },
+      { label: '文档变式', key: '/ai-review/file', icon: renderIcon(DocumentOutline) },
+      { label: '题目校验', key: '/question-verify', icon: renderIcon(CheckmarkOutline) }
+    ]
+  },
+  {
+    label: '教材管理',
+    key: '/textbooks',
+    icon: renderIcon(BookOutline)
+  },
+  {
+    label: '题库管理',
+    key: '/questions',
+    icon: renderIcon(DocumentTextOutline)
+  },
+  {
+    label: '试卷管理',
+    key: 'paper-management',
+    icon: renderIcon(FileTrayFullOutline),
+    children: [
+      { label: '智能组卷', key: '/paper-generate', icon: renderIcon(LayersOutline) },
+      { label: '试卷编辑/导出', key: '/papers', icon: renderIcon(NewspaperOutline) },
+      { label: '试卷审核', key: '/paper-review', icon: renderIcon(RibbonOutline) }
+    ]
+  },
+  {
+    label: '答题卡',
+    key: '/answer-sheets',
+    icon: renderIcon(TicketOutline)
+  }
+])
+
+const activeKey = computed(() => route.path)
+
+function handleMenuUpdate(key) {
+  if (!key.startsWith('/')) return
+  router.push(key)
+}
+
 onMounted(() => {
   checkHealth()
   timer = setInterval(checkHealth, 30000)
+  initTheme()
 })
 
 watch(
@@ -45,119 +172,143 @@ watch(
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  if (themeMediaQuery && themeMediaListener) {
+    themeMediaQuery.removeEventListener('change', themeMediaListener)
+  }
 })
 </script>
 
 <template>
-  <router-view v-if="isLoginPage" />
+  <n-config-provider :theme="isDarkMode ? darkTheme : null" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN">
+    <n-message-provider>
+      <n-dialog-provider>
+        <router-view v-if="isLoginPage" />
 
-  <el-container v-else class="layout">
-    <el-header class="header">
-      <div class="brand">智能组卷系统</div>
-      <div class="right">
-        <div v-if="user" class="user">
-          <span class="userName">{{ user.name }}</span>
-          <el-button size="small" @click="logout" :icon="SwitchButton">退出登录</el-button>
-        </div>
-        <div class="health-check">
-          <div class="indicator" :class="apiStatus"></div>
-          <span>API连通性</span>
-        </div>
-      </div>
-    </el-header>
+        <n-layout v-else class="layout" has-sider>
+          <n-layout-sider
+            v-model:collapsed="collapsed"
+            bordered
+            collapse-mode="width"
+            :collapsed-width="64"
+            :width="220"
+            show-trigger
+            content-style="display: flex; flex-direction: column;"
+          >
+            <div class="logo" :class="{ 'logo-collapsed': collapsed }">
+              {{ collapsed ? '组卷' : '智能组卷系统' }}
+            </div>
+            <n-menu
+              :options="menuOptions"
+              :value="activeKey"
+              :collapsed="collapsed"
+              @update:value="handleMenuUpdate"
+              :collapsed-width="64"
+              :collapsed-icon-size="22"
+              style="flex: 1;"
+            />
+            <div class="aside-footer">
+              <!-- 主题切换按钮 -->
+              <n-tooltip v-if="collapsed" placement="right">
+                <template #trigger>
+                  <div class="footer-item" @click="toggleTheme">
+                    <n-icon size="18" class="footer-icon">
+                      <SunnyOutline v-if="isDarkMode" />
+                      <MoonOutline v-else />
+                    </n-icon>
+                  </div>
+                </template>
+                {{ isDarkMode ? '切换到亮色' : '切换到暗色' }}
+              </n-tooltip>
+              <div v-else class="footer-item" @click="toggleTheme">
+                <n-icon size="18" class="footer-icon">
+                  <SunnyOutline v-if="isDarkMode" />
+                  <MoonOutline v-else />
+                </n-icon>
+                <span class="footer-text">{{ isDarkMode ? '切换到亮色' : '切换到暗色' }}</span>
+              </div>
 
-    <el-container class="container-body">
-      <el-aside class="aside" width="220px">
-        <el-menu router :default-active="$route.path" class="menu">
-          <el-menu-item index="/dicts">
-            <el-icon><Collection /></el-icon>
-            <span>基础信息</span>
-          </el-menu-item>
-          <el-sub-menu index="/ai-review">
-            <template #title>
-              <el-icon><MagicStick /></el-icon>
-              <span>智能出题</span>
-            </template>
-            <el-menu-item index="/ai-review/text">
-              <el-icon><Edit /></el-icon>
-              <span>AI出题</span>
-            </el-menu-item>
-            <el-menu-item index="/ai-review/paper">
-              <el-icon><CopyDocument /></el-icon>
-              <span>试卷变式</span>
-            </el-menu-item>
-            <el-menu-item index="/ai-review/file">
-              <el-icon><Document /></el-icon>
-              <span>文档变式</span>
-            </el-menu-item>
-            <el-menu-item index="/question-verify">
-              <el-icon><Check /></el-icon>
-              <span>题目校验</span>
-            </el-menu-item>
-          </el-sub-menu>
-          <el-menu-item index="/textbooks">
-            <el-icon><Notebook /></el-icon>
-            <span>教材管理</span>
-          </el-menu-item>
-          <el-menu-item index="/questions">
-            <el-icon><DocumentCopy /></el-icon>
-            <span>题库管理</span>
-          </el-menu-item>
-          <el-sub-menu index="paper-management">
-            <template #title>
-              <el-icon><Files /></el-icon>
-              <span>试卷管理</span>
-            </template>
-            <el-menu-item index="/paper-generate">
-              <el-icon><Cpu /></el-icon>
-              <span>智能组卷</span>
-            </el-menu-item>
-            <el-menu-item index="/papers">
-              <el-icon><Edit /></el-icon>
-              <span>试卷编辑/导出</span>
-            </el-menu-item>
-            <el-menu-item index="/paper-review">
-              <el-icon><Stamp /></el-icon>
-              <span>试卷审核</span>
-            </el-menu-item>
-          </el-sub-menu>
-          <el-menu-item index="/answer-sheets">
-            <el-icon><Tickets /></el-icon>
-            <span>答题卡</span>
-          </el-menu-item>
-        </el-menu>
-      </el-aside>
-      <el-main class="main">
-        <router-view />
-      </el-main>
-    </el-container>
-  </el-container>
+              <!-- API 连通性状态 -->
+              <n-tooltip v-if="collapsed" placement="right">
+                <template #trigger>
+                  <div class="footer-item api-item" :class="apiStatus">
+                    <n-icon size="18" class="footer-icon">
+                      <WifiOutline v-if="apiStatus === 'success'" />
+                      <CloudOfflineOutline v-else />
+                    </n-icon>
+                  </div>
+                </template>
+                API {{ apiStatus === 'success' ? '已连接' : '未连接' }}
+              </n-tooltip>
+              <div v-else class="footer-item api-item" :class="apiStatus">
+                <n-icon size="18" class="footer-icon">
+                  <WifiOutline v-if="apiStatus === 'success'" />
+                  <CloudOfflineOutline v-else />
+                </n-icon>
+                <span class="footer-text">API {{ apiStatus === 'success' ? '已连接' : '未连接' }}</span>
+              </div>
+            </div>
+          </n-layout-sider>
+
+          <n-layout>
+            <n-layout-header bordered class="header">
+              <div class="header-left"></div>
+              <div class="right">
+                <div v-if="user" class="user">
+                  <span class="userName">{{ user.name }}</span>
+                  <n-button size="small" @click="logout">
+                    <template #icon>
+                      <n-icon><LogOutOutline /></n-icon>
+                    </template>
+                    退出登录
+                  </n-button>
+                </div>
+              </div>
+            </n-layout-header>
+
+            <n-layout-content class="main" content-style="padding: 16px;">
+              <router-view />
+            </n-layout-content>
+          </n-layout>
+        </n-layout>
+      </n-dialog-provider>
+    </n-message-provider>
+  </n-config-provider>
 </template>
 
 <style scoped>
 .layout {
   height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background-color: var(--el-bg-color);
+}
+
+.logo {
+  padding: 16px;
+  font-weight: 700;
+  font-size: 16px;
+  text-align: center;
+  border-bottom: 1px solid var(--n-border-color);
+  white-space: nowrap;
+  overflow: hidden;
+  transition: all 0.3s;
+}
+
+.logo-collapsed {
+  padding: 16px 8px;
+  font-size: 14px;
 }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--el-border-color);
   height: 60px;
-  background-color: var(--el-bg-color);
+  padding: 0 20px;
 }
 
-.brand {
-  font-weight: 700;
-  letter-spacing: 0.5px;
+.header-left {
+  flex: 1;
 }
 
 .right {
-  color: var(--el-text-color-secondary);
   font-size: 13px;
   display: flex;
   align-items: center;
@@ -170,115 +321,65 @@ onUnmounted(() => {
   gap: 10px;
 }
 
-.userName {
-  color: var(--el-text-color-regular);
+.main {
+  overflow-y: auto;
 }
 
-.health-check {
+.aside-footer {
+  padding: 8px;
+  border-top: 1px solid var(--n-border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.footer-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--n-text-color-3);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-.indicator {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background-color: var(--el-text-color-disabled); /* unknown */
-  transition: background-color 0.3s;
+.footer-item:hover {
+  background-color: var(--n-color-hover);
+  color: var(--n-text-color-2);
 }
 
-.indicator.success {
-  background-color: var(--el-color-success);
+.footer-icon {
+  flex-shrink: 0;
 }
 
-.indicator.error {
-  background-color: var(--el-color-danger);
-}
-
-.container-body {
-  flex: 1;
+.footer-text {
+  white-space: nowrap;
   overflow: hidden;
-  display: flex;
+  text-overflow: ellipsis;
 }
 
-.aside {
-  border-right: 1px solid var(--el-border-color);
-  height: 100%;
-  overflow-y: auto;
-  background-color: var(--el-bg-color-page);
+/* API 状态颜色 */
+.api-item.success {
+  color: #18a058;
 }
 
-.menu {
-  border-right: none;
-  background-color: transparent;
-  padding: 8px;
+.api-item.success:hover {
+  background-color: rgba(24, 160, 88, 0.1);
+  color: #18a058;
 }
 
-:deep(.el-menu-item),
-:deep(.el-sub-menu__title) {
-  border-radius: 8px;
-  margin-bottom: 4px;
-  height: 44px;
-  line-height: 44px;
-  font-size: 15px;
-  font-weight: 500;
+.api-item.error {
+  color: #d03050;
 }
 
-:deep(.el-menu-item.is-active) {
-  background-color: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
-  font-weight: 600;
+.api-item.error:hover {
+  background-color: rgba(208, 48, 80, 0.1);
+  color: #d03050;
 }
 
-@media (prefers-color-scheme: dark) {
-  :deep(.el-menu-item.is-active),
-  :deep(.el-sub-menu .el-menu-item.is-active) {
-    background-color: rgba(64, 158, 255, 0.15) !important;
-  }
-
-  :deep(.el-sub-menu .el-menu) {
-    background-color: rgba(255, 255, 255, 0.04) !important;
-  }
-}
-
-:deep(.el-menu-item:hover),
-:deep(.el-sub-menu__title:hover) {
-  background-color: var(--el-fill-color);
-}
-
-/* Submenu container styling */
-:deep(.el-sub-menu .el-menu) {
-  background-color: var(--el-fill-color-lighter);
-  border-radius: 8px;
-  margin: 4px 8px 8px 8px; /* Indent the whole submenu block */
-  padding: 4px;
-}
-
-/* Submenu item specific styling */
-:deep(.el-sub-menu .el-menu-item) {
-  min-width: unset;
-  margin: 0 0 2px 0;
-  width: auto;
-  height: 36px;
-  line-height: 36px;
-  font-size: 13px; /* Smaller font size */
-  color: var(--el-text-color-regular);
-}
-
-:deep(.el-sub-menu .el-menu-item:hover) {
-  background-color: var(--el-fill-color-darker);
-}
-
-:deep(.el-sub-menu .el-menu-item.is-active) {
-  background-color: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
-}
-
-.main {
-  padding: 16px;
-  flex: 1;
-  overflow-y: auto;
-  background-color: var(--el-bg-color-page);
+.api-item.unknown {
+  color: var(--n-text-color-3);
 }
 </style>

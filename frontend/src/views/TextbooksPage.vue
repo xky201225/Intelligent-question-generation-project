@@ -1,9 +1,11 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus, Operation, Edit, Delete, Upload, MagicStick, Check, Close, Download } from '@element-plus/icons-vue'
+import { computed, onMounted, reactive, ref, watch, h } from 'vue'
+import { useMessage, useDialog } from 'naive-ui'
+import { RefreshOutline, AddOutline, SettingsOutline, CreateOutline, TrashOutline, CloudUploadOutline, SparklesOutline, CheckmarkOutline, CloseOutline, DownloadOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 
+const message = useMessage()
+const dialog = useDialog()
 const loading = ref(false)
 const error = ref('')
 
@@ -14,16 +16,22 @@ const textbooks = ref([])
 const selectedTextbook = ref(null)
 
 const filterTextbookId = ref(null)
-const selectedPublisher = ref('')
+const selectedPublisher = ref(null)
 
 const filteredTextbooks = computed(() => {
   return textbooks.value.filter(t => {
     const matchId = !filterTextbookId.value || t.textbook_id === filterTextbookId.value
-    
     const matchPub = !selectedPublisher.value || t.publisher === selectedPublisher.value
-    
     return matchId && matchPub
   })
+})
+
+// 用于表格显示的教材列表（选中单个教材时只显示该教材）
+const displayedTextbooks = computed(() => {
+  if (filterTextbookId.value) {
+    return filteredTextbooks.value.filter(t => t.textbook_id === filterTextbookId.value)
+  }
+  return filteredTextbooks.value
 })
 
 const publisherOptions = computed(() => {
@@ -31,7 +39,7 @@ const publisherOptions = computed(() => {
   for (const t of textbooks.value) {
     if (t.publisher) set.add(t.publisher)
   }
-  return Array.from(set)
+  return Array.from(set).map(p => ({ label: p, value: p }))
 })
 
 const chapters = ref([])
@@ -75,7 +83,7 @@ async function loadChapterSummary(chapterId) {
     const resp = await http.get(`/textbooks/chapters/${chapterId}/summary`)
     chapterSummary.value = resp.data.summary || ''
   } catch (e) {
-    ElMessage.error(e?.message || '概要加载失败')
+    message.error(e?.message || '概要加载失败')
   } finally {
     summaryLoading.value = false
   }
@@ -83,7 +91,7 @@ async function loadChapterSummary(chapterId) {
 
 async function saveChapterSummary() {
   if (!selectedChapterId.value) {
-    ElMessage.warning('请先选择一个章节节点')
+    message.warning('请先选择一个章节节点')
     return
   }
   summaryLoading.value = true
@@ -91,9 +99,9 @@ async function saveChapterSummary() {
     await http.put(`/textbooks/chapters/${selectedChapterId.value}/summary`, {
       summary: chapterSummary.value,
     })
-    ElMessage.success('已保存')
+    message.success('已保存')
   } catch (e) {
-    ElMessage.error(e?.message || '保存失败')
+    message.error(e?.message || '保存失败')
   } finally {
     summaryLoading.value = false
   }
@@ -101,39 +109,36 @@ async function saveChapterSummary() {
 
 async function generateChapterSummary() {
   if (!selectedChapterId.value) {
-    ElMessage.warning('请先选择一个章节节点')
+    message.warning('请先选择一个章节节点')
     return
   }
   summaryLoading.value = true
   try {
     const resp = await http.post(`/textbooks/chapters/${selectedChapterId.value}/summary/generate`)
     chapterSummary.value = resp.data.summary || ''
-    ElMessage.success('已生成')
+    message.success('已生成')
   } catch (e) {
-    ElMessage.error(e?.message || '生成失败')
+    message.error(e?.message || '生成失败')
   } finally {
     summaryLoading.value = false
   }
 }
 
-async function importChaptersExcel(options) {
+async function importChaptersExcel({ file }) {
   if (!selectedTextbook.value) {
-    ElMessage.warning('请先选择一个教材')
-    options.onError && options.onError(new Error('未选择教材'))
+    message.warning('请先选择一个教材')
     return
   }
   const form = new FormData()
-  form.append('file', options.file)
+  form.append('file', file.file)
   try {
     const resp = await http.post(`/textbooks/${selectedTextbook.value.textbook_id}/chapters/import/excel`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
-    ElMessage.success(`导入完成：新增${resp.data.inserted}，跳过${resp.data.skipped}`)
+    message.success(`导入完成：新增${resp.data.inserted}，跳过${resp.data.skipped}`)
     await loadChapters(selectedTextbook.value.textbook_id)
-    options.onSuccess && options.onSuccess()
   } catch (e) {
-    ElMessage.error(e?.message || '导入失败')
-    options.onError && options.onError(e)
+    message.error(e?.message || '导入失败')
   }
 }
 
@@ -179,7 +184,7 @@ async function loadChapters(textbookId) {
     chapterTree.value = resp.data.tree || []
     selectedChapterId.value = null
   } catch (e) {
-    ElMessage.error(e?.message || '章节加载失败')
+    message.error(e?.message || '章节加载失败')
   }
 }
 
@@ -205,7 +210,7 @@ function openEditTextbook(row) {
 async function submitTextbook() {
   try {
     if (!textbookDialog.form.subject_id || !textbookDialog.form.textbook_name) {
-      ElMessage.error('subject_id 和教材名称必填')
+      message.error('subject_id 和教材名称必填')
       return
     }
     if (textbookDialog.mode === 'create') {
@@ -228,31 +233,38 @@ async function submitTextbook() {
     textbookDialog.visible = false
     await loadTextbooks()
   } catch (e) {
-    ElMessage.error(e?.message || '保存失败')
+    message.error(e?.message || '保存失败')
   }
 }
 
 async function removeTextbook(row) {
-  try {
-    await ElMessageBox.confirm(`确认删除教材：${row.textbook_name}？`, '提示', { type: 'warning' })
-    await http.delete(`/textbooks/${row.textbook_id}`)
-    if (selectedTextbook.value?.textbook_id === row.textbook_id) {
-      selectedTextbook.value = null
-      await loadChapters(null)
+  dialog.warning({
+    title: '提示',
+    content: `确认删除教材：${row.textbook_name}？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await http.delete(`/textbooks/${row.textbook_id}`)
+        if (selectedTextbook.value?.textbook_id === row.textbook_id) {
+          selectedTextbook.value = null
+          await loadChapters(null)
+        }
+        await loadTextbooks()
+      } catch (e) {
+        message.error(e?.message || '删除失败')
+      }
     }
-    await loadTextbooks()
-  } catch (e) {
-    if (e?.message) ElMessage.error(e.message)
-  }
+  })
 }
 
 function openCreateChapter(mode) {
   if (!selectedTextbook.value) {
-    ElMessage.warning('请先选择一个教材')
+    message.warning('请先选择一个教材')
     return
   }
   if (mode === 'child' && !selectedChapter.value) {
-    ElMessage.warning('请先选择一个章节节点')
+    message.warning('请先选择一个章节节点')
     return
   }
   chapterDialog.mode = 'create'
@@ -268,7 +280,7 @@ function openCreateChapter(mode) {
 
 function openEditChapter() {
   if (!selectedChapter.value) {
-    ElMessage.warning('请先选择一个章节节点')
+    message.warning('请先选择一个章节节点')
     return
   }
   chapterDialog.mode = 'edit'
@@ -286,7 +298,7 @@ async function submitChapter() {
   if (!selectedTextbook.value) return
   try {
     if (!chapterDialog.form.chapter_name || chapterDialog.form.chapter_level === null) {
-      ElMessage.error('章节名称与层级必填')
+      message.error('章节名称与层级必填')
       return
     }
     if (chapterDialog.mode === 'create') {
@@ -307,22 +319,29 @@ async function submitChapter() {
     chapterDialog.visible = false
     await loadChapters(selectedTextbook.value.textbook_id)
   } catch (e) {
-    ElMessage.error(e?.message || '保存失败')
+    message.error(e?.message || '保存失败')
   }
 }
 
 async function removeChapter() {
   if (!selectedChapter.value) {
-    ElMessage.warning('请先选择一个章节节点')
+    message.warning('请先选择一个章节节点')
     return
   }
-  try {
-    await ElMessageBox.confirm(`确认删除章节：${selectedChapter.value.chapter_name}？`, '提示', { type: 'warning' })
-    await http.delete(`/textbooks/chapters/${selectedChapter.value.chapter_id}`)
-    await loadChapters(selectedTextbook.value.textbook_id)
-  } catch (e) {
-    if (e?.message) ElMessage.error(e.message)
-  }
+  dialog.warning({
+    title: '提示',
+    content: `确认删除章节：${selectedChapter.value.chapter_name}？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await http.delete(`/textbooks/chapters/${selectedChapter.value.chapter_id}`)
+        await loadChapters(selectedTextbook.value.textbook_id)
+      } catch (e) {
+        message.error(e?.message || '删除失败')
+      }
+    }
+  })
 }
 
 const showChapterTreeDrawer = ref(false)
@@ -334,160 +353,244 @@ async function handleSelectTextbook(row) {
   showChapterTreeDrawer.value = true
 }
 
-async function handleNodeClick(node) {
-  if (!node) return
-  selectedChapterId.value = node.chapter_id
-  await loadChapterSummary(node.chapter_id)
+async function handleNodeSelect(keys) {
+  if (keys.length === 0) return
+  selectedChapterId.value = keys[0]
+  await loadChapterSummary(keys[0])
   showSummaryDialog.value = true
 }
-
-watch(selectedChapterId, async (id) => {
-  // await loadChapterSummary(id) // Moved to handleNodeClick
-})
 
 onMounted(async () => {
   await loadSubjects()
   await loadTextbooks()
 })
+
+const subjectOptions = computed(() => subjects.value.map(s => ({ label: s.subject_name, value: s.subject_id })))
+const textbookOptions = computed(() => textbooks.value.map(t => ({ label: t.textbook_name + (t.author ? '-' + t.author : ''), value: t.textbook_id })))
+
+const tableColumns = [
+  { title: 'ID', key: 'textbook_id', width: 90 },
+  {
+    title: '名称',
+    key: 'textbook_name',
+    render(row) {
+      return h('span', null, [
+        row.textbook_name,
+        row.author ? h('span', { style: { color: '#999', marginLeft: '4px' } }, `(${row.author})`) : null
+      ])
+    }
+  },
+  { title: '作者', key: 'author', width: 140 },
+  { title: '出版社', key: 'publisher', width: 140 },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 300,
+    render(row) {
+      return h('div', { style: { display: 'flex', gap: '8px' } }, [
+        h('n-button', { size: 'small', onClick: () => handleSelectTextbook(row) }, { default: () => '管理章节' }),
+        h('n-button', { size: 'small', onClick: () => openEditTextbook(row) }, { default: () => '编辑' }),
+        h('n-button', { size: 'small', type: 'error', onClick: () => removeTextbook(row) }, { default: () => '删除' })
+      ])
+    }
+  }
+]
 </script>
 
 <template>
   <div class="page">
-    <div class="toolbar">
-      <div class="left">
-        <el-select v-model="filter.subject_id" clearable placeholder="按科目筛选" style="width: 180px" @change="() => { filterTextbookId = null; loadTextbooks() }">
-          <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
-        </el-select>
-        <el-select v-model="filterTextbookId" filterable clearable placeholder="请选择教材" style="width: 240px">
-          <el-option v-for="item in textbooks" :key="item.textbook_id" :label="item.textbook_name + (item.author ? '-' + item.author : '')" :value="item.textbook_id" />
-        </el-select>
-        <el-select v-model="selectedPublisher" placeholder="按出版社筛选" clearable style="width: 180px">
-          <el-option v-for="pub in publisherOptions" :key="pub" :label="pub" :value="pub" />
-        </el-select>
-        <el-button :loading="loading" @click="loadTextbooks" :icon="Refresh">刷新</el-button>
+    <n-card title="教材列表">
+      <template #header-extra>
+        <div class="header-actions">
+          <n-button :loading="loading" @click="loadTextbooks">
+            <template #icon><n-icon><RefreshOutline /></n-icon></template>
+            刷新
+          </n-button>
+          <n-button type="primary" @click="openCreateTextbook">
+            <template #icon><n-icon><AddOutline /></n-icon></template>
+            新增教材
+          </n-button>
+        </div>
+      </template>
+
+      <!-- 筛选区域：标签式布局 -->
+      <div class="filter-section">
+        <div class="filter-row">
+          <div class="filter-label">科目</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="s in subjects"
+              :key="s.subject_id"
+              :bordered="false"
+              :class="['filter-tag', filter.subject_id === s.subject_id ? 'tag-selected' : '']"
+              @click="() => { filter.subject_id = filter.subject_id === s.subject_id ? null : s.subject_id; filterTextbookId = null; loadTextbooks() }"
+            >
+              {{ s.subject_name }}
+            </n-tag>
+          </div>
+        </div>
+
+        <div class="filter-row" v-if="filteredTextbooks.length > 0">
+          <div class="filter-label">教材</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="t in filteredTextbooks.slice(0, 20)"
+              :key="t.textbook_id"
+              :bordered="false"
+              :class="['filter-tag', filterTextbookId === t.textbook_id ? 'tag-selected' : '']"
+              @click="() => { filterTextbookId = filterTextbookId === t.textbook_id ? null : t.textbook_id }"
+            >
+              {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
+            </n-tag>
+            <span v-if="filteredTextbooks.length > 20" class="more-hint">还有 {{ filteredTextbooks.length - 20 }} 个...</span>
+          </div>
+        </div>
+
+        <div class="filter-row" v-if="publisherOptions.length > 0">
+          <div class="filter-label">出版社</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="p in publisherOptions"
+              :key="p.value"
+              :bordered="false"
+              :class="['filter-tag', selectedPublisher === p.value ? 'tag-selected' : '']"
+              @click="() => { selectedPublisher = selectedPublisher === p.value ? null : p.value }"
+            >
+              {{ p.label }}
+            </n-tag>
+          </div>
+        </div>
       </div>
-      <el-button type="primary" @click="openCreateTextbook" :icon="Plus">新增教材</el-button>
-    </div>
 
-    <el-alert v-if="error" :title="error" type="error" show-icon />
-
-    <el-card class="card" header="教材列表">
-      <el-table
-        :data="filteredTextbooks"
+      <n-data-table
+        :columns="tableColumns"
+        :data="displayedTextbooks"
         :loading="loading"
-        highlight-current-row
-        height="calc(100vh - 180px)"
-      >
-        <el-table-column prop="textbook_id" label="ID" width="90" />
-        <el-table-column label="名称" min-width="200">
-          <template #default="{ row }">
-            <span>{{ row.textbook_name }}</span>
-            <span v-if="row.author" style="color: var(--el-text-color-secondary); margin-left: 4px;">
-              ({{ row.author }})
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="author" label="作者" width="140" />
-        <el-table-column prop="publisher" label="出版社" width="140" />
-        <el-table-column fixed="right" label="操作" width="300">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="handleSelectTextbook(row)" :icon="Operation">管理章节</el-button>
-            <el-button link type="primary" @click="openEditTextbook(row)" :icon="Edit">编辑</el-button>
-            <el-button link type="danger" @click="removeTextbook(row)" :icon="Delete">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+        :max-height="500"
+        striped
+      />
+    </n-card>
+
+    <n-alert v-if="error" type="error" :title="error" />
 
     <!-- 章节树 Drawer -->
-    <el-drawer v-model="showChapterTreeDrawer" :title="selectedTextbook ? `[${selectedTextbook.textbook_name}] 章节管理` : '章节管理'" size="50%">
-      <div class="drawer-header-actions">
-        <el-button size="small" type="success" @click="downloadTemplate" :icon="Download">下载模板</el-button>
-        <el-upload :show-file-list="false" :http-request="importChaptersExcel" accept=".xlsx,.xls">
-          <el-button size="small" :icon="Upload">Excel导入章节</el-button>
-        </el-upload>
-        <el-button size="small" @click="openCreateChapter('root')" :icon="Plus">新增根章节</el-button>
-        <el-button size="small" @click="openCreateChapter('child')" :icon="Plus">新增子章节</el-button>
-        <el-button size="small" @click="openEditChapter" :icon="Edit">编辑</el-button>
-        <el-button size="small" type="danger" @click="removeChapter" :icon="Delete">删除</el-button>
-      </div>
-      
-      <el-tree
-        :data="chapterTree"
-        node-key="chapter_id"
-        :props="{ label: 'chapter_name', children: 'children' }"
-        highlight-current
-        default-expand-all
-        @node-click="handleNodeClick"
-        class="chapter-tree"
-      />
-    </el-drawer>
+    <n-drawer v-model:show="showChapterTreeDrawer" :width="600">
+      <n-drawer-content :title="selectedTextbook ? `[${selectedTextbook.textbook_name}] 章节管理` : '章节管理'">
+        <div class="drawer-header-actions">
+          <n-button size="small" @click="downloadTemplate">
+            <template #icon><n-icon><DownloadOutline /></n-icon></template>
+            下载模板
+          </n-button>
+          <n-upload :custom-request="importChaptersExcel" accept=".xlsx,.xls" :show-file-list="false">
+            <n-button size="small">
+              <template #icon><n-icon><CloudUploadOutline /></n-icon></template>
+              Excel导入章节
+            </n-button>
+          </n-upload>
+          <n-button size="small" @click="openCreateChapter('root')">
+            <template #icon><n-icon><AddOutline /></n-icon></template>
+            新增根章节
+          </n-button>
+          <n-button size="small" @click="openCreateChapter('child')">
+            <template #icon><n-icon><AddOutline /></n-icon></template>
+            新增子章节
+          </n-button>
+          <n-button size="small" @click="openEditChapter">
+            <template #icon><n-icon><CreateOutline /></n-icon></template>
+            编辑
+          </n-button>
+          <n-button size="small" type="error" @click="removeChapter">
+            <template #icon><n-icon><TrashOutline /></n-icon></template>
+            删除
+          </n-button>
+        </div>
+
+        <n-tree
+          :data="chapterTree"
+          key-field="chapter_id"
+          label-field="chapter_name"
+          children-field="children"
+          selectable
+          default-expand-all
+          @update:selected-keys="handleNodeSelect"
+          class="chapter-tree"
+        />
+      </n-drawer-content>
+    </n-drawer>
 
     <!-- 章节概要 Dialog -->
-    <el-dialog v-model="showSummaryDialog" :title="selectedChapter ? `[${selectedChapter.chapter_name}] 章节概要` : '章节概要'" width="600px">
+    <n-modal v-model:show="showSummaryDialog" preset="card" :title="selectedChapter ? `[${selectedChapter.chapter_name}] 章节概要` : '章节概要'" style="width: 600px">
       <div class="summaryBox">
         <div class="summaryHeader">
           <div></div>
           <div class="summaryActions">
-            <el-button size="small" :loading="summaryLoading" @click="generateChapterSummary" :icon="MagicStick">AI生成</el-button>
-            <el-button size="small" type="primary" :loading="summaryLoading" @click="saveChapterSummary" :icon="Check">保存</el-button>
+            <n-button size="small" :loading="summaryLoading" @click="generateChapterSummary">
+              <template #icon><n-icon><SparklesOutline /></n-icon></template>
+              AI生成
+            </n-button>
+            <n-button size="small" type="primary" :loading="summaryLoading" @click="saveChapterSummary">
+              <template #icon><n-icon><CheckmarkOutline /></n-icon></template>
+              保存
+            </n-button>
           </div>
         </div>
-        <el-input
-          v-model="chapterSummary"
+        <n-input
+          v-model:value="chapterSummary"
           type="textarea"
           :rows="12"
           placeholder="章节概要内容..."
         />
       </div>
-    </el-dialog>
+    </n-modal>
 
-    <el-dialog v-model="textbookDialog.visible" :title="textbookDialog.mode === 'create' ? '新增教材' : '编辑教材'" width="520px">
-      <el-form label-width="90px">
-        <el-form-item label="科目">
-          <el-select v-model="textbookDialog.form.subject_id" placeholder="选择科目" style="width: 100%">
-            <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="教材名称">
-          <el-input v-model="textbookDialog.form.textbook_name" />
-        </el-form-item>
-        <el-form-item label="作者">
-          <el-input v-model="textbookDialog.form.author" />
-        </el-form-item>
-        <el-form-item label="出版社">
-          <el-input v-model="textbookDialog.form.publisher" />
-        </el-form-item>
-        <el-form-item label="版本">
-          <el-input v-model="textbookDialog.form.edition" />
-        </el-form-item>
-      </el-form>
+    <n-modal v-model:show="textbookDialog.visible" preset="card" :title="textbookDialog.mode === 'create' ? '新增教材' : '编辑教材'" style="width: 520px">
+      <n-form label-placement="left" label-width="90px">
+        <n-form-item label="科目">
+          <n-select v-model:value="textbookDialog.form.subject_id" :options="subjectOptions" placeholder="选择科目" />
+        </n-form-item>
+        <n-form-item label="教材名称">
+          <n-input v-model:value="textbookDialog.form.textbook_name" />
+        </n-form-item>
+        <n-form-item label="作者">
+          <n-input v-model:value="textbookDialog.form.author" />
+        </n-form-item>
+        <n-form-item label="出版社">
+          <n-input v-model:value="textbookDialog.form.publisher" />
+        </n-form-item>
+        <n-form-item label="版本">
+          <n-input v-model:value="textbookDialog.form.edition" />
+        </n-form-item>
+      </n-form>
       <template #footer>
-        <el-button @click="textbookDialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="submitTextbook">保存</el-button>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <n-button @click="textbookDialog.visible = false">取消</n-button>
+          <n-button type="primary" @click="submitTextbook">保存</n-button>
+        </div>
       </template>
-    </el-dialog>
+    </n-modal>
 
-    <el-dialog v-model="chapterDialog.visible" :title="chapterDialog.mode === 'create' ? '新增章节' : '编辑章节'" width="520px">
-      <el-form label-width="90px">
-        <el-form-item label="章节名称">
-          <el-input v-model="chapterDialog.form.chapter_name" />
-        </el-form-item>
-        <el-form-item label="层级">
-          <el-input-number v-model="chapterDialog.form.chapter_level" :min="1" :max="10" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="父章节ID">
-          <el-input-number v-model="chapterDialog.form.parent_chapter_id" :min="1" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="排序">
-          <el-input-number v-model="chapterDialog.form.chapter_sort" :min="1" style="width: 100%" />
-        </el-form-item>
-      </el-form>
+    <n-modal v-model:show="chapterDialog.visible" preset="card" :title="chapterDialog.mode === 'create' ? '新增章节' : '编辑章节'" style="width: 520px">
+      <n-form label-placement="left" label-width="90px">
+        <n-form-item label="章节名称">
+          <n-input v-model:value="chapterDialog.form.chapter_name" />
+        </n-form-item>
+        <n-form-item label="层级">
+          <n-input-number v-model:value="chapterDialog.form.chapter_level" :min="1" :max="10" style="width: 100%" />
+        </n-form-item>
+        <n-form-item label="父章节ID">
+          <n-input-number v-model:value="chapterDialog.form.parent_chapter_id" :min="1" style="width: 100%" />
+        </n-form-item>
+        <n-form-item label="排序">
+          <n-input-number v-model:value="chapterDialog.form.chapter_sort" :min="1" style="width: 100%" />
+        </n-form-item>
+      </n-form>
       <template #footer>
-        <el-button @click="chapterDialog.visible = false">取消</el-button>
-        <el-button type="primary" @click="submitChapter">保存</el-button>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <n-button @click="chapterDialog.visible = false">取消</n-button>
+          <n-button type="primary" @click="submitChapter">保存</n-button>
+        </div>
       </template>
-    </el-dialog>
+    </n-modal>
   </div>
 </template>
 
@@ -510,28 +613,7 @@ onMounted(async () => {
   gap: 12px;
 }
 
-.card {
-  width: 100%;
-}
-
-.placeholder {
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-}
-
-.cardHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.actions {
-  display: flex;
-  gap: 8px;
-}
-
 .summaryBox {
-  margin-top: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -556,8 +638,81 @@ onMounted(async () => {
 }
 
 .chapter-tree {
-  border: 1px solid var(--el-border-color);
+  border: 1px solid var(--n-border-color);
   padding: 10px;
   border-radius: 4px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* 标签式筛选区域样式 */
+.filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--n-color-embedded);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.filter-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.filter-label {
+  flex-shrink: 0;
+  width: 60px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--n-text-color-2);
+  line-height: 28px;
+  text-align: right;
+}
+
+.filter-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.filter-tag {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 10px !important;
+  padding: 4px 14px !important;
+  font-size: 13px !important;
+  background: rgba(100, 116, 139, 0.08) !important;
+  color: #475569 !important;
+  border: 1px solid rgba(100, 116, 139, 0.2) !important;
+}
+
+.filter-tag:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.tag-selected {
+  background: linear-gradient(135deg, #1a5fb4 0%, #2563eb 100%) !important;
+  color: white !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(26, 95, 180, 0.4) !important;
+}
+
+.more-hint {
+  font-size: 12px;
+  color: var(--n-text-color-3);
 }
 </style>

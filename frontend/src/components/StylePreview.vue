@@ -240,15 +240,15 @@ const gridCellStyle = computed(() => {
 
 <style scoped>
 .style-preview {
-  --sp-bg: var(--el-bg-color, #fff);
-  --sp-bg-soft: var(--el-fill-color-lighter, #f7f7f7);
-  --sp-border: var(--el-border-color, #ddd);
-  --sp-border-light: var(--el-border-color-lighter, #eee);
-  --sp-text: var(--el-text-color-primary, #333);
-  --sp-text-secondary: var(--el-text-color-secondary, #666);
-  --sp-accent: var(--el-color-primary, #409eff);
-  --sp-card-bg: var(--el-fill-color-blank, #fff);
-  --sp-card-bg-hover: var(--el-fill-color-light, #e0e0e0);
+  --sp-bg: var(--n-card-color, #fff);
+  --sp-bg-soft: var(--n-color-embedded, #f7f7f7);
+  --sp-border: var(--n-border-color, #ddd);
+  --sp-border-light: var(--n-border-color, #eee);
+  --sp-text: var(--n-text-color-1, #333);
+  --sp-text-secondary: var(--n-text-color-3, #666);
+  --sp-accent: var(--n-primary-color, #18a058);
+  --sp-card-bg: var(--n-card-color, #fff);
+  --sp-card-bg-hover: var(--n-color-target, #e0e0e0);
 }
 
 .bubble-wrapper {

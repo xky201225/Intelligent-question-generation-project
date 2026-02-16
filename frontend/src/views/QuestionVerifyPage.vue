@@ -1,10 +1,12 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Check, Delete, Edit, Refresh, Close } from '@element-plus/icons-vue'
+import { onMounted, reactive, ref, computed, h } from 'vue'
+import { useMessage, useDialog, NButton } from 'naive-ui'
+import { CheckmarkOutline, TrashOutline, CreateOutline, RefreshOutline, CloseOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getUser } from '../auth'
 
+const message = useMessage()
+const dialog = useDialog()
 const loading = ref(false)
 const subjects = ref([])
 const types = ref([])
@@ -81,76 +83,56 @@ async function loadPending() {
       page: pending.page,
       page_size: pending.page_size,
       subject_id: pending.subject_id || undefined,
-      review_status: 0, // 强制只查待审核
+      review_status: 0,
     }
     const resp = await http.get('/ai/pending', { params })
     pending.items = resp.data.items || []
     pending.total = resp.data.total || 0
   } catch (e) {
-    ElMessage.error(e?.message || '加载失败')
+    message.error(e?.message || '加载失败')
   } finally {
     loading.value = false
   }
 }
 
 async function approveAll() {
-  try {
-    await ElMessageBox.confirm('确定要通过所有待审核题目吗？', '提示', { type: 'warning' })
-    const user = getUser()
-    const resp = await http.post('/ai/verify/batch', {
-      action: 'approve_all_pending',
-      reviewer: user ? user.name : 'reviewer',
-    })
-    ElMessage.success(`已批量通过 ${resp.data.count} 道题目`)
-    await loadPending()
-  } catch (e) {
-    if (e !== 'cancel') {
-      ElMessage.error(e?.message || '操作失败')
+  dialog.warning({
+    title: '提示',
+    content: '确定要通过所有待审核题目吗？',
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const user = getUser()
+        const resp = await http.post('/ai/verify/batch', {
+          action: 'approve_all_pending',
+          reviewer: user ? user.name : 'reviewer',
+        })
+        message.success(`已批量通过 ${resp.data.count} 道题目`)
+        await loadPending()
+      } catch (e) {
+        message.error(e?.message || '操作失败')
+      }
     }
-  }
+  })
 }
 
 async function remove(row) {
-  try {
-    await ElMessageBox.confirm(`确认删除题目ID=${row.question_id}？`, '提示', { type: 'warning' })
-    await http.delete(`/questions/${row.question_id}`)
-    ElMessage.success('已删除')
-    await loadPending()
-  } catch (e) {
-    if (e !== 'cancel') {
-      ElMessage.error(e?.message || '操作失败')
+  dialog.warning({
+    title: '提示',
+    content: `确认删除题目ID=${row.question_id}？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await http.delete(`/questions/${row.question_id}`)
+        message.success('已删除')
+        await loadPending()
+      } catch (e) {
+        message.error(e?.message || '操作失败')
+      }
     }
-  }
-}
-
-async function approve(row) {
-  try {
-    const user = getUser()
-    await http.post('/ai/verify', {
-      question_id: row.question_id,
-      action: 'approve',
-      reviewer: user ? user.name : 'reviewer',
-    })
-    ElMessage.success('已通过')
-    await loadPending()
-  } catch (e) {
-    ElMessage.error(e?.message || '操作失败')
-  }
-}
-
-async function reject(row) {
-  try {
-    const user = getUser()
-    await http.post('/ai/verify', {
-      question_id: row.question_id,
-      action: 'reject',
-      reviewer: user ? user.name : 'reviewer',
-    })
-    ElMessage.success('已拒绝')
-    await loadPending()
-  } catch (e) {
-    ElMessage.error(e?.message || '操作失败')
-  }
+  })
 }
 
 function openEdit(row) {
@@ -166,7 +148,6 @@ function openEdit(row) {
     question_answer: row.question_answer,
     question_analysis: row.question_analysis,
   }
-  // Load dependencies
   if (row.subject_id) loadTextbooks(row.subject_id)
   if (row.textbook_id) loadChapters(row.textbook_id)
   editDialog.visible = true
@@ -182,10 +163,10 @@ async function updateAndApprove() {
       fields: { ...editDialog.form },
     })
     editDialog.visible = false
-    ElMessage.success('已修改并通过')
+    message.success('已修改并通过')
     await loadPending()
   } catch (e) {
-    ElMessage.error(e?.message || '操作失败')
+    message.error(e?.message || '操作失败')
   }
 }
 
@@ -193,127 +174,187 @@ onMounted(async () => {
   await loadDicts()
   await loadPending()
 })
+
+const subjectOptions = computed(() => subjects.value.map(s => ({ label: s.subject_name, value: s.subject_id })))
+const typeOptions = computed(() => types.value.map(t => ({ label: t.type_name, value: t.type_id })))
+const textbookOptions = computed(() => textbooks.value.map(t => ({ label: t.textbook_name, value: t.textbook_id })))
+
+function treeToOptions(tree) {
+  return tree.map(node => ({
+    label: node.chapter_name,
+    value: node.chapter_id,
+    children: node.children && node.children.length > 0 ? treeToOptions(node.children) : undefined
+  }))
+}
+const chapterCascaderOptions = computed(() => treeToOptions(chapterTree.value))
+
+const tableColumns = [
+  { title: 'ID', key: 'question_id', width: 80 },
+  { title: '科目', key: 'subject_name', width: 120 },
+  { title: '章节', key: 'chapter_name', width: 150, ellipsis: { tooltip: true } },
+  { title: '题型', key: 'type_name', width: 100 },
+  { title: '难度', key: 'difficulty_name', width: 80 },
+  {
+    title: '题目内容',
+    key: 'question_content',
+    ellipsis: { tooltip: true },
+    render(row) {
+      return h('div', {
+        style: { cursor: 'pointer' },
+        onClick: () => openDetail(row)
+      }, row.question_content?.substring(0, 80))
+    }
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 200,
+    render(row) {
+      return h('div', { style: { display: 'flex', gap: '4px' } }, [
+        h(NButton, { size: 'small', onClick: () => openEdit(row) }, { default: () => '修改通过' }),
+        h(NButton, { size: 'small', type: 'error', onClick: () => remove(row) }, { default: () => '删除' })
+      ])
+    }
+  }
+]
+
+function handlePageChange(page) {
+  pending.page = page
+  loadPending()
+}
+
+function handlePageSizeChange(pageSize) {
+  pending.page_size = pageSize
+  pending.page = 1
+  loadPending()
+}
 </script>
 
 <template>
   <div class="page">
-    <el-card>
+    <n-card>
       <template #header>
         <div class="header">
           <span>待校验题目</span>
           <div style="display: flex; gap: 8px">
-            <el-select
-              v-model="pending.subject_id"
-              clearable
-              placeholder="筛选科目"
-              style="width: 140px"
-              @change="loadPending"
-            >
-              <el-option v-for="s in subjects" :key="s.subject_id" :label="s.subject_name" :value="s.subject_id" />
-            </el-select>
-            <el-button type="success" plain @click="approveAll" :icon="Check">一键全部通过</el-button>
-            <el-button @click="loadPending" :icon="Refresh">刷新</el-button>
+            <n-button type="success" @click="approveAll">
+              <template #icon><n-icon><CheckmarkOutline /></n-icon></template>
+              一键全部通过
+            </n-button>
+            <n-button @click="loadPending">
+              <template #icon><n-icon><RefreshOutline /></n-icon></template>
+              刷新
+            </n-button>
           </div>
         </div>
       </template>
 
-      <el-table :data="pending.items" style="width: 100%" v-loading="loading">
-        <el-table-column prop="question_id" label="ID" width="80" />
-        <el-table-column prop="subject_name" label="科目" width="120" />
-        <el-table-column prop="chapter_name" label="章节" width="150" show-overflow-tooltip />
-        <el-table-column prop="type_name" label="题型" width="100" />
-        <el-table-column prop="difficulty_name" label="难度" width="80" />
-        <el-table-column label="题目内容">
-          <template #default="{ row }">
-            <div class="contentCell" @click="openDetail(row)" title="点击查看详情">{{ row.question_content }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="240">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)" :icon="Edit">修改通过</el-button>
-            <el-button link type="danger" @click="remove(row)" :icon="Delete">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <!-- 筛选区域：标签式布局 -->
+      <div class="filter-section">
+        <div class="filter-row">
+          <div class="filter-label">科目</div>
+          <div class="filter-content filter-tags">
+            <n-tag
+              v-for="s in subjects"
+              :key="s.subject_id"
+              :bordered="false"
+              :class="['filter-tag', pending.subject_id === s.subject_id ? 'tag-selected' : '']"
+              @click="() => { pending.subject_id = pending.subject_id === s.subject_id ? null : s.subject_id; loadPending() }"
+            >
+              {{ s.subject_name }}
+            </n-tag>
+          </div>
+        </div>
+      </div>
+
+      <n-data-table
+        :columns="tableColumns"
+        :data="pending.items"
+        :loading="loading"
+        :max-height="500"
+      />
 
       <div class="pager">
-        <el-pagination
-          v-model:current-page="pending.page"
+        <n-pagination
+          v-model:page="pending.page"
           v-model:page-size="pending.page_size"
-          :total="pending.total"
+          :item-count="pending.total"
           :page-sizes="[10, 20, 50, 100]"
-          layout="total, sizes, prev, pager, next, jumper"
-          @size-change="loadPending"
-          @current-change="loadPending"
+          show-size-picker
+          @update:page="handlePageChange"
+          @update:page-size="handlePageSizeChange"
         />
       </div>
-    </el-card>
+    </n-card>
 
-    <el-dialog v-model="detailDialog.visible" title="题目详情" width="600px">
+    <n-modal v-model:show="detailDialog.visible" preset="card" title="题目详情" style="width: 600px">
       <div v-if="detailDialog.item">
-        <el-descriptions :column="1" border>
-          <el-descriptions-item label="题干">
+        <n-descriptions :column="1" bordered>
+          <n-descriptions-item label="题干">
             <div style="white-space: pre-wrap">{{ detailDialog.item.question_content }}</div>
-          </el-descriptions-item>
-          <el-descriptions-item label="答案">
+          </n-descriptions-item>
+          <n-descriptions-item label="答案">
             <div style="white-space: pre-wrap">{{ detailDialog.item.question_answer }}</div>
-          </el-descriptions-item>
-          <el-descriptions-item label="解析">
+          </n-descriptions-item>
+          <n-descriptions-item label="解析">
             <div style="white-space: pre-wrap">{{ detailDialog.item.question_analysis }}</div>
-          </el-descriptions-item>
-        </el-descriptions>
+          </n-descriptions-item>
+        </n-descriptions>
       </div>
       <template #footer>
-        <el-button @click="detailDialog.visible = false">关闭</el-button>
+        <n-button @click="detailDialog.visible = false">关闭</n-button>
       </template>
-    </el-dialog>
+    </n-modal>
 
-    <el-dialog v-model="editDialog.visible" title="修改并通过" width="760px">
-      <el-form label-width="90px">
-        <el-form-item label="教材章节">
+    <n-modal v-model:show="editDialog.visible" preset="card" title="修改并通过" style="width: 760px">
+      <n-form label-placement="left" label-width="90px">
+        <n-form-item label="教材章节">
           <div style="display: flex; gap: 8px; width: 100%">
-            <el-select 
-              v-model="editDialog.form.textbook_id" 
-              placeholder="选择教材" 
+            <n-select
+              v-model:value="editDialog.form.textbook_id"
+              :options="textbookOptions"
+              placeholder="选择教材"
               style="flex: 1"
-              @change="() => { editDialog.form.chapter_id = null; loadChapters(editDialog.form.textbook_id) }"
-            >
-              <el-option v-for="t in textbooks" :key="t.textbook_id" :label="t.textbook_name" :value="t.textbook_id" />
-            </el-select>
-            <el-tree-select
-              v-model="editDialog.form.chapter_id"
-              :data="chapterTree"
-              :props="{ label: 'chapter_name', children: 'children', value: 'chapter_id' }"
-              node-key="chapter_id"
+              @update:value="() => { editDialog.form.chapter_id = null; loadChapters(editDialog.form.textbook_id) }"
+            />
+            <n-cascader
+              v-model:value="editDialog.form.chapter_id"
+              :options="chapterCascaderOptions"
+              check-strategy="child"
               placeholder="选择章节"
               style="flex: 1"
-              check-strictly
             />
           </div>
-        </el-form-item>
-        <el-form-item label="题型">
-          <el-select v-model="editDialog.form.type_id" placeholder="请选择题型" style="width: 100%">
-            <el-option v-for="t in types" :key="t.type_id" :label="t.type_name" :value="t.type_id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="题干">
-          <el-input v-model="editDialog.form.question_content" type="textarea" :rows="5" />
-        </el-form-item>
-        <el-form-item label="答案">
-          <el-input v-model="editDialog.form.question_answer" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="解析">
-          <el-input v-model="editDialog.form.question_analysis" type="textarea" :rows="3" />
-        </el-form-item>
-        <el-form-item label="分值">
-          <el-input-number v-model="editDialog.form.question_score" :min="0" :step="0.5" style="width: 100%" />
-        </el-form-item>
-      </el-form>
+        </n-form-item>
+        <n-form-item label="题型">
+          <n-select v-model:value="editDialog.form.type_id" :options="typeOptions" placeholder="请选择题型" />
+        </n-form-item>
+        <n-form-item label="题干">
+          <n-input v-model:value="editDialog.form.question_content" type="textarea" :rows="5" />
+        </n-form-item>
+        <n-form-item label="答案">
+          <n-input v-model:value="editDialog.form.question_answer" type="textarea" :rows="2" />
+        </n-form-item>
+        <n-form-item label="解析">
+          <n-input v-model:value="editDialog.form.question_analysis" type="textarea" :rows="3" />
+        </n-form-item>
+        <n-form-item label="分值">
+          <n-input-number v-model:value="editDialog.form.question_score" :min="0" :step="0.5" style="width: 100%" />
+        </n-form-item>
+      </n-form>
       <template #footer>
-        <el-button @click="editDialog.visible = false" :icon="Close">取消</el-button>
-        <el-button type="primary" @click="updateAndApprove" :icon="Check">保存并通过</el-button>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <n-button @click="editDialog.visible = false">
+            <template #icon><n-icon><CloseOutline /></n-icon></template>
+            取消
+          </n-button>
+          <n-button type="primary" @click="updateAndApprove">
+            <template #icon><n-icon><CheckmarkOutline /></n-icon></template>
+            保存并通过
+          </n-button>
+        </div>
       </template>
-    </el-dialog>
+    </n-modal>
   </div>
 </template>
 
@@ -330,17 +371,67 @@ onMounted(async () => {
   justify-content: space-between;
 }
 
-.contentCell {
-  max-height: 80px;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  white-space: pre-wrap;
-  cursor: pointer;
+/* 标签式筛选区域样式 */
+.filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--n-color-embedded);
+  border-radius: 12px;
+  margin-bottom: 16px;
 }
-.contentCell:hover {
-  color: var(--el-color-primary);
+
+.filter-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.filter-label {
+  flex-shrink: 0;
+  width: 60px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--n-text-color-2);
+  line-height: 28px;
+  text-align: right;
+}
+
+.filter-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.filter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.filter-tag {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 10px !important;
+  padding: 4px 14px !important;
+  font-size: 13px !important;
+  background: rgba(100, 116, 139, 0.08) !important;
+  color: #475569 !important;
+  border: 1px solid rgba(100, 116, 139, 0.2) !important;
+}
+
+.filter-tag:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.tag-selected {
+  background: linear-gradient(135deg, #1a5fb4 0%, #2563eb 100%) !important;
+  color: white !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(26, 95, 180, 0.4) !important;
 }
 
 .pager {
