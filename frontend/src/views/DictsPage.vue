@@ -309,15 +309,25 @@ const difficultyColumns = [
     gap: 20px;
 }
 
+/* 卡片圆角和极浅灰色背景 */
+.n-card {
+  border-radius: 20px !important;
+  background: linear-gradient(135deg, #fafbfc 60%, #fff 100%) !important;
+  box-shadow: none;
+  border: 1px solid #f0f1f3;
+}
+
+/* 统计卡片也用圆角和分割色 */
 .stat-card {
-    background: var(--n-card-color);
-    border-radius: 8px;
+    background: linear-gradient(135deg, #fff 60%, #f6f7fa 100%);
+    border-radius: 20px;
     padding: 20px;
     display: flex;
     align-items: center;
     gap: 15px;
     transition: transform 0.2s;
-    border: 1px solid var(--n-border-color);
+    border: 1.5px solid #e0e3e8; /* 更明显的边缘 */
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04); /* 轻微阴影提升立体感 */
 }
 
 .stat-card:hover {
@@ -378,7 +388,7 @@ const difficultyColumns = [
 }
 
 .chart-card {
-    border-radius: 8px;
+    border-radius: 20px;
 }
 
 .grid {
@@ -386,5 +396,18 @@ const difficultyColumns = [
   grid-template-columns: 1fr 1fr;
   gap: 20px;
 }
-</style>
 
+/* 表格圆角美化 */
+:deep(.n-data-table) {
+  border-radius: 20px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+}
+
+:global(html[data-theme="dark"]) .stat-card {
+    background: linear-gradient(135deg, #232326 60%, #2a2a2e 100%);
+    border: 1.5px solid #44454a; /* 暗色模式下更深的边缘 */
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+}
+</style>

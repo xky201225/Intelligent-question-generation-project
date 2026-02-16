@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch, h } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMessage, useDialog, NButton, NTag, NIcon } from 'naive-ui'
-import { RefreshOutline, TrashOutline, DownloadOutline, CheckmarkOutline, ExpandOutline, EyeOutline, ReorderFourOutline, SearchOutline } from '@vicons/ionicons5'
+import { RefreshOutline, TrashOutline, DownloadOutline, CheckmarkOutline, ExpandOutline, EyeOutline, ReorderFourOutline, SearchOutline, FunnelOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getUser } from '../auth'
 import ExportPreview from '../components/ExportPreview.vue'
@@ -50,6 +50,8 @@ const paperForm = reactive({
   is_closed_book: null,
   review_status: 0,
 })
+
+const filterCollapsed = ref(true)
 
 async function loadDicts() {
   try {
@@ -329,7 +331,6 @@ const tableColumns = [
 <template>
   <div class="page">
     <n-alert v-if="error" type="error" :title="error" />
-
     <n-card :title="mode === 'export' ? '试卷列表' : '待审核试卷'">
       <template #header-extra>
         <div class="header-actions">
@@ -347,61 +348,69 @@ const tableColumns = [
           </n-button>
         </div>
       </template>
-
-      <!-- 筛选区域：标签式布局 -->
       <div class="filter-section">
-        <div class="filter-row">
-          <div class="filter-label">科目</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="s in subjects"
-              :key="s.subject_id"
-              :bordered="false"
-              :class="['filter-tag', filters.subject_id === s.subject_id ? 'tag-selected' : '']"
-              @click="async () => {
-                filters.subject_id = filters.subject_id === s.subject_id ? null : s.subject_id;
-                filters.textbook_id = null;
-                await loadTextbooks();
-                await loadPapers()
-              }"
-            >
-              {{ s.subject_name }}
-            </n-tag>
-          </div>
+        <div class="filter-section-header filter-section-toggle" @click="filterCollapsed = !filterCollapsed">
+          <n-icon size="16" color="#64748b"><FunnelOutline /></n-icon>
+          <span>条件筛选</span>
+          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><ExpandOutline /></n-icon>
         </div>
+        <template v-if="!filterCollapsed">
+          <!-- 筛选区域：标签式布局 -->
+          <div class="filter-section-content">
+            <div class="filter-row">
+              <div class="filter-label">科目</div>
+              <div class="filter-content filter-tags">
+                <n-tag
+                  v-for="s in subjects"
+                  :key="s.subject_id"
+                  :bordered="false"
+                  :class="['filter-tag', filters.subject_id === s.subject_id ? 'tag-selected' : '']"
+                  @click="async () => {
+                    filters.subject_id = filters.subject_id === s.subject_id ? null : s.subject_id;
+                    filters.textbook_id = null;
+                    await loadTextbooks();
+                    await loadPapers()
+                  }"
+                >
+                  {{ s.subject_name }}
+                </n-tag>
+              </div>
+            </div>
 
-        <div class="filter-row" v-if="textbooks.length > 0">
-          <div class="filter-label">教材</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="t in textbooks"
-              :key="t.textbook_id"
-              :bordered="false"
-              :class="['filter-tag', filters.textbook_id === t.textbook_id ? 'tag-selected' : '']"
-              @click="async () => {
-                filters.textbook_id = filters.textbook_id === t.textbook_id ? null : t.textbook_id;
-                await loadPapers()
-              }"
-            >
-              {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
-            </n-tag>
-          </div>
-        </div>
+            <div class="filter-row" v-if="textbooks.length > 0">
+              <div class="filter-label">教材</div>
+              <div class="filter-content filter-tags">
+                <n-tag
+                  v-for="t in textbooks"
+                  :key="t.textbook_id"
+                  :bordered="false"
+                  :class="['filter-tag', filters.textbook_id === t.textbook_id ? 'tag-selected' : '']"
+                  @click="async () => {
+                    filters.textbook_id = filters.textbook_id === t.textbook_id ? null : t.textbook_id;
+                    await loadPapers()
+                  }"
+                >
+                  {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
+                </n-tag>
+              </div>
+            </div>
 
-        <div class="filter-row" v-if="publisherOptions.length > 0">
-          <div class="filter-label">出版社</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="p in publisherOptions"
-              :key="p.value"
-              :bordered="false"
-              :class="['filter-tag', filters.publisher === p.value ? 'tag-selected' : '']"
-              @click="() => { filters.publisher = filters.publisher === p.value ? null : p.value; loadPapers() }"
-            >
-              {{ p.label }}
-            </n-tag>
+            <div class="filter-row" v-if="publisherOptions.length > 0">
+              <div class="filter-label">出版社</div>
+              <div class="filter-content filter-tags">
+                <n-tag
+                  v-for="p in publisherOptions"
+                  :key="p.value"
+                  :bordered="false"
+                  :class="['filter-tag', filters.publisher === p.value ? 'tag-selected' : '']"
+                  @click="() => { filters.publisher = filters.publisher === p.value ? null : p.value; loadPapers() }"
+                >
+                  {{ p.label }}
+                </n-tag>
+              </div>
+            </div>
           </div>
-        </div>
+        </template>
       </div>
 
       <n-data-table
@@ -676,6 +685,27 @@ const tableColumns = [
   background: var(--n-color-embedded);
   border-radius: 12px;
   margin-bottom: 16px;
+}
+
+.filter-section-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--n-text-color-2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-section-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+}
+
+.filter-section-toggle:hover {
+  background: rgba(100,116,139,0.06);
+  border-radius: 8px;
 }
 
 .filter-row {

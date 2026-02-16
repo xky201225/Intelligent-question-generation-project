@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch, nextTick, h } from 'vue'
 import { useMessage, useDialog, NButton, NTag } from 'naive-ui'
-import { SearchOutline, AddOutline, RefreshOutline, TrashOutline, CheckmarkOutline, ExpandOutline, PlayOutline, CloseOutline } from '@vicons/ionicons5'
+import { SearchOutline, AddOutline, RefreshOutline, TrashOutline, CheckmarkOutline, ExpandOutline, PlayOutline, CloseOutline, FunnelOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getToken, getUser } from '../auth'
 
@@ -88,12 +88,15 @@ async function loadDicts() {
 async function loadTextbooks() {
   if (!filters.subject_id) {
     textbooks.value = []
+    chapterTree.value = []
     return
   }
   const resp = await http.get('/textbooks', {
     params: { subject_id: filters.subject_id },
   })
   textbooks.value = resp.data.items || []
+  // 切换科目时清空章节
+  chapterTree.value = []
 }
 
 async function loadChapters() {
@@ -171,8 +174,15 @@ function toggleMainChapter(chapter) {
       filters.chapter_ids = filters.chapter_ids.filter(id => !childIds.includes(id))
     }
   } else {
-    // 选择大章节
+    // 选择大章节，同时默认选中所有子章节
     selectedMainChapters.value.push(chapter.chapter_id)
+    if (chapter.children && chapter.children.length > 0) {
+      for (const child of chapter.children) {
+        if (!filters.chapter_ids.includes(child.chapter_id)) {
+          filters.chapter_ids.push(child.chapter_id)
+        }
+      }
+    }
   }
   search()
 }
@@ -506,7 +516,6 @@ function handlePageSizeChange(pageSize) { filters.page_size = pageSize; filters.
 <template>
   <div class="page">
     <n-alert v-if="error" type="error" :title="error" />
-
     <n-card>
       <template #header>
         <div class="header">
@@ -528,128 +537,139 @@ function handlePageSizeChange(pageSize) { filters.page_size = pageSize; filters.
           </div>
         </div>
       </template>
-
-      <!-- 筛选区域：标签式布局 -->
       <div class="filter-section">
-        <!-- 第一行：基础筛选 -->
-        <div class="filter-row">
-          <div class="filter-label">关键词</div>
-          <div class="filter-content">
-            <n-input v-model:value="filters.q" placeholder="题干/解析" style="width: 200px" clearable @keyup.enter="search" />
-          </div>
+        <div class="filter-section-header filter-section-toggle" @click="filterCollapsed = !filterCollapsed">
+          <n-icon size="16" color="#64748b"><FunnelOutline /></n-icon>
+          <span>条件筛选</span>
+          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><ExpandOutline /></n-icon>
         </div>
-
-        <div class="filter-row">
-          <div class="filter-label">科目</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="s in subjects"
-              :key="s.subject_id"
-              :bordered="false"
-              :class="['filter-tag', filters.subject_id === s.subject_id ? 'tag-selected' : '']"
-              @click="async () => {
-                filters.subject_id = filters.subject_id === s.subject_id ? null : s.subject_id;
-                filters.textbook_id = null;
-                filters.chapter_ids = [];
-                await loadTextbooks();
-                await loadChapters();
-                await search()
-              }"
-            >
-              {{ s.subject_name }}
-            </n-tag>
+        <template v-if="!filterCollapsed">
+          <!-- 第一行：基础筛选 -->
+          <div class="filter-row">
+            <div class="filter-label">关键词</div>
+            <div class="filter-content">
+              <n-input v-model:value="filters.q" placeholder="题干/解析" style="width: 200px" clearable @keyup.enter="search" />
+            </div>
           </div>
-        </div>
 
-        <div class="filter-row" v-if="textbooks.length > 0">
-          <div class="filter-label">教材</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="t in textbooks"
-              :key="t.textbook_id"
-              :bordered="false"
-              :class="['filter-tag', filters.textbook_id === t.textbook_id ? 'tag-selected' : '']"
-              @click="async () => {
-                filters.textbook_id = filters.textbook_id === t.textbook_id ? null : t.textbook_id;
-                filters.chapter_ids = [];
-                selectedMainChapters = [];
-                await loadChapters();
-                await search()
-              }"
-            >
-              {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
-            </n-tag>
+          <div class="filter-row">
+            <div class="filter-label">科目</div>
+            <div class="filter-content filter-tags">
+              <n-tag
+                v-for="s in subjects"
+                :key="s.subject_id"
+                :bordered="false"
+                :class="['filter-tag', filters.subject_id === s.subject_id ? 'tag-selected' : '']"
+                @click="async () => {
+                  filters.subject_id = filters.subject_id === s.subject_id ? null : s.subject_id;
+                  filters.textbook_id = null;
+                  filters.chapter_ids = [];
+                  await loadTextbooks();
+                  await loadChapters();
+                  await search()
+                }"
+              >
+                {{ s.subject_name }}
+              </n-tag>
+            </div>
           </div>
-        </div>
 
-        <!-- 大章节选择 -->
-        <div class="filter-row" v-if="chapterTree.length > 0">
-          <div class="filter-label">章节</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="chapter in chapterTree"
-              :key="chapter.chapter_id"
-              :bordered="false"
-              :class="['filter-tag', 'chapter-main', selectedMainChapters.includes(chapter.chapter_id) ? 'chapter-main-selected' : '']"
-              @click="toggleMainChapter(chapter)"
-            >
-              {{ chapter.chapter_name }}
-            </n-tag>
+          <div class="filter-row">
+            <div class="filter-label">教材</div>
+            <div class="filter-content filter-tags">
+              <template v-if="textbooks.length > 0">
+                <n-tag
+                  v-for="t in textbooks"
+                  :key="t.textbook_id"
+                  :bordered="false"
+                  :class="['filter-tag', filters.textbook_id === t.textbook_id ? 'tag-selected' : '']"
+                  @click="async () => {
+                    filters.textbook_id = filters.textbook_id === t.textbook_id ? null : t.textbook_id;
+                    filters.chapter_ids = [];
+                    selectedMainChapters = [];
+                    await loadChapters();
+                    await search()
+                  }"
+                >
+                  {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
+                </n-tag>
+              </template>
+              <span v-else class="empty-hint">{{ filters.subject_id ? '暂无教材' : '请先选择科目' }}</span>
+            </div>
           </div>
-        </div>
 
-        <!-- 小章节选择（按大章节分组显示） -->
-        <div class="filter-row sub-chapters-row" v-if="visibleSubChapterGroups.length > 0">
-          <div class="filter-label">小节</div>
-          <div class="filter-content">
-            <div class="sub-chapters-container">
-              <div v-for="group in visibleSubChapterGroups" :key="group.parent.chapter_id" class="sub-chapter-group">
-                <span class="sub-chapter-group-label">{{ group.parent.chapter_name }}：</span>
-                <div class="sub-chapter-tags">
-                  <n-tag
-                    v-for="sub in group.children"
-                    :key="sub.chapter_id"
-                    :bordered="false"
-                    :class="['filter-tag', 'chapter-sub', filters.chapter_ids.includes(sub.chapter_id) ? 'chapter-sub-selected' : '']"
-                    @click="toggleSubChapter(sub.chapter_id)"
-                  >
-                    {{ sub.chapter_name }}
-                  </n-tag>
+          <!-- 大章节选择 -->
+          <div class="filter-row">
+            <div class="filter-label">章节</div>
+            <div class="filter-content filter-tags">
+              <template v-if="chapterTree.length > 0">
+                <n-tag
+                  v-for="chapter in chapterTree"
+                  :key="chapter.chapter_id"
+                  :bordered="false"
+                  :class="['filter-tag', 'chapter-main', selectedMainChapters.includes(chapter.chapter_id) ? 'chapter-main-selected' : '']"
+                  @click="toggleMainChapter(chapter)"
+                >
+                  {{ chapter.chapter_name }}
+                </n-tag>
+              </template>
+              <span v-else class="empty-hint">{{ filters.textbook_id ? '暂无章节' : '请先选择教材' }}</span>
+            </div>
+          </div>
+
+          <!-- 小章节选择（按大章节分组显示） -->
+          <div class="filter-row sub-chapters-row" v-if="visibleSubChapterGroups.length > 0">
+            <div class="filter-label">小节</div>
+            <div class="filter-content">
+              <div class="sub-chapters-container">
+                <div v-for="group in visibleSubChapterGroups" :key="group.parent.chapter_id" class="sub-chapter-group">
+                  <span class="sub-chapter-group-label">{{ group.parent.chapter_name }}：</span>
+                  <div class="sub-chapter-tags">
+                    <n-tag
+                      v-for="sub in group.children"
+                      :key="sub.chapter_id"
+                      :bordered="false"
+                      :class="['filter-tag', 'chapter-sub', filters.chapter_ids.includes(sub.chapter_id) ? 'chapter-sub-selected' : '']"
+                      @click="toggleSubChapter(sub.chapter_id)"
+                    >
+                      {{ sub.chapter_name }}
+                    </n-tag>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <div class="filter-row">
-          <div class="filter-label">题型</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="t in types"
-              :key="t.type_id"
-              :bordered="false"
-              :class="['filter-tag', filters.type_ids.includes(t.type_id) ? 'tag-selected' : '']"
-              @click="toggleType(t.type_id)"
-            >
-              {{ t.type_name }}
-            </n-tag>
+          <div class="filter-row">
+            <div class="filter-label">题型</div>
+            <div class="filter-content filter-tags">
+              <n-tag
+                v-for="t in types"
+                :key="t.type_id"
+                :bordered="false"
+                :class="['filter-tag', filters.type_ids.includes(t.type_id) ? 'tag-selected' : '']"
+                @click="toggleType(t.type_id)"
+              >
+                {{ t.type_name }}
+              </n-tag>
+            </div>
           </div>
-        </div>
 
-        <div class="filter-row">
-          <div class="filter-label">难度</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="d in difficulties"
-              :key="d.difficulty_id"
-              :bordered="false"
-              :class="['filter-tag', 'difficulty-tag', getDifficultyClass(d.difficulty_id, d.difficulty_name)]"
-              @click="toggleDifficulty(d.difficulty_id)"
-            >
-              {{ d.difficulty_name }}
-            </n-tag>
+          <div class="filter-row">
+            <div class="filter-label">难度</div>
+            <div class="filter-content filter-tags">
+              <n-tag
+                v-for="d in difficulties"
+                :key="d.difficulty_id"
+                :bordered="false"
+                :class="['filter-tag', 'difficulty-tag', getDifficultyClass(d.difficulty_id, d.difficulty_name)]"
+                @click="toggleDifficulty(d.difficulty_id)"
+              >
+                {{ d.difficulty_name }}
+              </n-tag>
+            </div>
           </div>
-        </div>
+        </template>
       </div>
 
       <n-data-table :columns="tableColumns" :data="available.items" :loading="loading" :max-height="560" :row-key="row => row.question_id" v-model:checked-row-keys="checkedRowKeys" />
@@ -774,6 +794,37 @@ function handlePageSizeChange(pageSize) { filters.page_size = pageSize; filters.
 .actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 
+:deep(.n-button) {
+  border-radius: 14px;
+}
+
+:deep(.n-data-table) {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+}
+
+:deep(.n-data-table .n-data-table-th) {
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.9));
+  font-weight: 600;
+  color: #334155;
+}
+
+:deep(.n-data-table .n-data-table-td),
+:deep(.n-data-table .n-data-table-th) {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+}
+
+:deep(.n-data-table .n-data-table-tr:nth-child(even) .n-data-table-td) {
+  background: rgba(248, 250, 252, 0.7);
+}
+
+:deep(.n-data-table .n-data-table-tr:hover .n-data-table-td) {
+  background: rgba(226, 232, 240, 0.6);
+}
+
 /* 标签式筛选区域样式 */
 .filter-section {
   display: flex;
@@ -783,6 +834,30 @@ function handlePageSizeChange(pageSize) { filters.page_size = pageSize; filters.
   padding: 16px;
   background: var(--n-color-embedded);
   border-radius: 12px;
+}
+
+.filter-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.15);
+}
+
+.filter-section-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+}
+
+.filter-section-toggle:hover {
+  background: rgba(100,116,139,0.06);
+  border-radius: 8px;
 }
 
 .filter-row {
@@ -836,6 +911,12 @@ function handlePageSizeChange(pageSize) { filters.page_size = pageSize; filters.
   color: white !important;
   border: none !important;
   box-shadow: 0 2px 8px rgba(26, 95, 180, 0.4) !important;
+}
+
+.empty-hint {
+  font-size: 13px;
+  color: #94a3b8;
+  font-style: italic;
 }
 
 /* 小节分组容器 */
@@ -971,17 +1052,35 @@ function handlePageSizeChange(pageSize) { filters.page_size = pageSize; filters.
 .row-right { display: flex; flex-direction: column; gap: 8px; width: 100px; border-left: 1px solid var(--n-border-color); padding-left: 10px; justify-content: center; }
 .control-item { display: flex; flex-direction: column; gap: 2px; align-items: flex-end; }
 .control-label { font-size: 12px; color: var(--n-text-color-3); }
-.streamPanel { position: fixed; right: 18px; top: 86px; width: 520px; height: 70vh; background-color: var(--n-card-color); border: 1px solid var(--n-border-color); border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); display: flex; flex-direction: column; z-index: 2000; }
-.streamHeader { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--n-border-color); }
-.streamTitle { display: flex; flex-direction: column; gap: 2px; }
-.streamMeta { color: var(--n-text-color-3); font-size: 12px; }
-.streamActions { display: flex; gap: 8px; }
-.streamProgress { padding: 10px 12px; border-bottom: 1px solid var(--n-border-color); display: flex; flex-direction: column; gap: 6px; }
-.progress-info { display: flex; justify-content: space-between; font-size: 13px; }
-.stage-text { font-weight: 500; color: var(--n-primary-color); }
-.streamBody { padding: 10px 12px; overflow: auto; flex: 1; }
-.streamLines { font-family: monospace; font-size: 12px; white-space: pre-wrap; margin-bottom: 12px; }
-.streamHint { color: var(--n-text-color-3); font-size: 12px; }
-.streamOutputTitle { font-weight: 700; margin-bottom: 6px; }
-.streamOutputPre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: monospace; font-size: 12px; }
+.streamPanel {
+  position: fixed;
+  right: 18px;
+  top: 86px;
+  width: 520px;
+  height: 70vh;
+  border: 1px solid var(--n-border-color);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  display: flex;
+  flex-direction: column;
+  z-index: 2000;
+  overflow: hidden;
+  background-color: transparent;
+}
+
+.streamPanel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  backdrop-filter: blur(26px) saturate(130%);
+  -webkit-backdrop-filter: blur(26px) saturate(130%);
+  background: rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
+
+.streamHeader, .streamProgress, .streamBody {
+  position: relative;
+  z-index: 1;
+}
 </style>

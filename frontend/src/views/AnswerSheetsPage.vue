@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch, nextTick } from 'vue'
 import { useMessage, useDialog, NButton } from 'naive-ui'
-import { AddOutline, RefreshOutline, CreateOutline, TrashOutline, CheckmarkOutline, EyeOutline, DownloadOutline, SparklesOutline } from '@vicons/ionicons5'
+import { AddOutline, RefreshOutline, CreateOutline, TrashOutline, CheckmarkOutline, EyeOutline, DownloadOutline, SparklesOutline, FunnelOutline, ExpandOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import StylePreview from '../components/StylePreview.vue'
 import { marked } from 'marked'
@@ -278,6 +278,8 @@ const sheetTableColumns = [
   { title: '试卷ID', key: 'paper_id', width: 100 }
 ]
 
+const filterCollapsed = ref(true)
+
 import { h } from 'vue'
 </script>
 
@@ -337,62 +339,69 @@ import { h } from 'vue'
           <n-card title="选择试卷与答题卡">
             <!-- 筛选区域：标签式布局 -->
             <div class="filter-section">
-              <div class="filter-row">
-                <div class="filter-label">科目</div>
-                <div class="filter-content filter-tags">
-                  <n-tag
-                    v-for="s in subjects"
-                    :key="s.subject_id"
-                    :bordered="false"
-                    :class="['filter-tag', filters.subject_id === s.subject_id ? 'tag-selected' : '']"
-                    @click="async () => {
-                      filters.subject_id = filters.subject_id === s.subject_id ? null : s.subject_id;
-                      filters.textbook_id = null;
-                      await loadTextbooks();
-                      await loadPapers()
-                    }"
-                  >
-                    {{ s.subject_name }}
-                  </n-tag>
-                </div>
+              <div class="filter-section-header filter-section-toggle" @click="filterCollapsed = !filterCollapsed">
+                <n-icon size="16" color="#64748b"><FunnelOutline /></n-icon>
+                <span>条件筛选</span>
+                <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><ExpandOutline /></n-icon>
               </div>
+              <template v-if="!filterCollapsed">
+                <div class="filter-row">
+                  <div class="filter-label">科目</div>
+                  <div class="filter-content filter-tags">
+                    <n-tag
+                      v-for="s in subjects"
+                      :key="s.subject_id"
+                      :bordered="false"
+                      :class="['filter-tag', filters.subject_id === s.subject_id ? 'tag-selected' : '']"
+                      @click="async () => {
+                        filters.subject_id = filters.subject_id === s.subject_id ? null : s.subject_id;
+                        filters.textbook_id = null;
+                        await loadTextbooks();
+                        await loadPapers()
+                      }"
+                    >
+                      {{ s.subject_name }}
+                    </n-tag>
+                  </div>
+                </div>
 
-              <div class="filter-row" v-if="textbooks.length > 0">
-                <div class="filter-label">教材</div>
-                <div class="filter-content filter-tags">
-                  <n-tag
-                    v-for="t in textbooks"
-                    :key="t.textbook_id"
-                    :bordered="false"
-                    :class="['filter-tag', filters.textbook_id === t.textbook_id ? 'tag-selected' : '']"
-                    @click="async () => {
-                      filters.textbook_id = filters.textbook_id === t.textbook_id ? null : t.textbook_id;
-                      await loadPapers()
-                    }"
-                  >
-                    {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
-                  </n-tag>
+                <div class="filter-row" v-if="textbooks.length > 0">
+                  <div class="filter-label">教材</div>
+                  <div class="filter-content filter-tags">
+                    <n-tag
+                      v-for="t in textbooks"
+                      :key="t.textbook_id"
+                      :bordered="false"
+                      :class="['filter-tag', filters.textbook_id === t.textbook_id ? 'tag-selected' : '']"
+                      @click="async () => {
+                        filters.textbook_id = filters.textbook_id === t.textbook_id ? null : t.textbook_id;
+                        await loadPapers()
+                      }"
+                    >
+                      {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
+                    </n-tag>
+                  </div>
                 </div>
-              </div>
 
-              <div class="filter-row" v-if="papers.length > 0">
-                <div class="filter-label">试卷</div>
-                <div class="filter-content filter-tags">
-                  <n-tag
-                    v-for="p in papers"
-                    :key="p.paper_id"
-                    :bordered="false"
-                    :class="['filter-tag', selectedPaperId === p.paper_id ? 'tag-selected' : '']"
-                    @click="async () => {
-                      selectedPaperId = selectedPaperId === p.paper_id ? null : p.paper_id;
-                      selectedSheetId = null;
-                      await loadSheets()
-                    }"
-                  >
-                    {{ p.paper_name }}
-                  </n-tag>
+                <div class="filter-row" v-if="papers.length > 0">
+                  <div class="filter-label">试卷</div>
+                  <div class="filter-content filter-tags">
+                    <n-tag
+                      v-for="p in papers"
+                      :key="p.paper_id"
+                      :bordered="false"
+                      :class="['filter-tag', selectedPaperId === p.paper_id ? 'tag-selected' : '']"
+                      @click="async () => {
+                        selectedPaperId = selectedPaperId === p.paper_id ? null : p.paper_id;
+                        selectedSheetId = null;
+                        await loadSheets()
+                      }"
+                    >
+                      {{ p.paper_name }}
+                    </n-tag>
+                  </div>
                 </div>
-              </div>
+              </template>
             </div>
 
             <div class="toolbar">
@@ -504,6 +513,18 @@ import { h } from 'vue'
   background: var(--n-color-embedded);
   border-radius: 12px;
   margin-bottom: 12px;
+}
+
+.filter-section-header {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+}
+
+.filter-section-header:hover {
+  background: rgba(100,116,139,0.06);
+  border-radius: 8px;
 }
 
 .filter-row {

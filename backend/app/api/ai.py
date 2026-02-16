@@ -11,6 +11,7 @@ import pdfplumber
 from docx import Document
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from typing import Optional
 
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 from sqlalchemy import and_, insert, select, update, func, or_
@@ -47,7 +48,7 @@ def _extract_json_list(text: str) -> list[dict]:
     if start < 0:
         raise ValueError("AI 返回内容不是 JSON 数组：未找到 [")
 
-    def find_balanced_end(s: str, start_idx: int) -> int | None:
+    def find_balanced_end(s: str, start_idx: int) -> Optional[int]:
         in_string = False
         escape = False
         depth = 0
@@ -115,13 +116,13 @@ def _job_update(job_id: str, patch: dict) -> None:
         _jobs[job_id].update(patch)
 
 
-def _job_snapshot(job_id: str) -> dict | None:
+def _job_snapshot(job_id: str) -> Optional[dict]:
     with _jobs_lock:
         v = _jobs.get(job_id)
         return dict(v) if v else None
 
 
-def _job_event(job_id: str, event_type: str, message: str | None = None, data: dict | None = None) -> None:
+def _job_event(job_id: str, event_type: str, message: Optional[str] = None, data: Optional[dict] = None) -> None:
     now = datetime.now().isoformat(timespec="seconds")
     with _jobs_lock:
         job = _jobs.get(job_id)
@@ -135,7 +136,7 @@ def _job_event(job_id: str, event_type: str, message: str | None = None, data: d
             job["events"] = job["events"][-2000:]
 
 
-def _pick_first(d: dict, keys: list[str]) -> str | None:
+def _pick_first(d: dict, keys: list[str]) -> Optional[str]:
     for k in keys:
         v = d.get(k)
         if v is None:
@@ -736,22 +737,15 @@ def generate_from_file():
 def generate_questions():
     payload = request.get_json(silent=True) or {}
     subject_id = payload.get("subject_id")
-    # chapter_id = payload.get("chapter_id") # 旧逻辑
-    chapter_ids = payload.get("chapter_ids") or []
-    if payload.get("chapter_id"): # 兼容旧参数
+    chapter_ids = payload.get("chapter_ids") or []  # 被选中的小章节ID
+    selected_main_chapters = payload.get("selected_main_chapters") or []  # 选中的大章节ID
+    if payload.get("chapter_id"):  # 兼容旧参数
         chapter_ids.append(payload.get("chapter_id"))
-    
     create_user = payload.get("create_user") or "ai"
-    
-    # 支持 rules 列表模式
     rules = payload.get("rules")
-    
-    # 支持 chapter_weights 字典 {str(chapter_id): float(weight)}
-    # weight 为百分比（如 30 表示 30%）或小数（0.3），这里统一按比例分配
     chapter_weights = payload.get("chapter_weights") or {}
-    
+
     if not rules:
-        # 兼容旧的单条模式
         type_id = payload.get("type_id")
         difficulty_id = payload.get("difficulty_id")
         count = payload.get("count")
@@ -763,16 +757,14 @@ def generate_questions():
     if not subject_id or not chapter_ids:
         return jsonify({"error": {"message": "subject_id 和 chapter_ids 必填", "type": "BadRequest"}}), 400
 
-    # 验证 rules 并计算总数
     validated_rules = []
     total_count_needed = 0
-    
     for r in rules:
         tid = r.get("type_id")
         did = r.get("difficulty_id")
         cnt = r.get("count")
         if not tid or not did or not cnt:
-            continue # 忽略无效规则
+            continue
         try:
             cnt = int(cnt)
             if cnt < 1 or cnt > 50:
@@ -780,59 +772,44 @@ def generate_questions():
             validated_rules.append({"type_id": tid, "difficulty_id": did, "count": cnt})
             total_count_needed += cnt
         except:
-             return jsonify({"error": {"message": "count 格式错误", "type": "BadRequest"}}), 400
-    
+            return jsonify({"error": {"message": "count 格式错误", "type": "BadRequest"}}), 400
     if not validated_rules:
         return jsonify({"error": {"message": "有效生成规则为空", "type": "BadRequest"}}), 400
 
-    # 计算每个章节的分配比例
-    # 如果前端传了 chapter_weights，则优先使用；否则平均分配
-    # chapter_weights 格式: {"1": 30, "2": 70}
-    
-    # 过滤出有效的 chapter_ids（必须在库里存在）
-    # 但为了简单，先假设前端传的都是有效的
-    
-    final_chapter_dist = {} # {chapter_id: ratio}
-    
-    # 1. 整理权重输入
-    weight_map = {}
-    for cid in chapter_ids:
-        w = chapter_weights.get(str(cid))
-        if w is not None:
-            try:
-                weight_map[int(cid)] = float(w)
-            except:
-                pass
-    
-    # 2. 如果有权重输入，归一化；如果没有，平均分配
-    if weight_map:
-        total_weight = sum(weight_map.values())
-        if total_weight > 0:
-            for cid, w in weight_map.items():
-                final_chapter_dist[cid] = w / total_weight
-        else:
-            # 权重全为0，回退到平均分配
-            avg = 1.0 / len(chapter_ids)
-            for cid in chapter_ids:
-                final_chapter_dist[int(cid)] = avg
+    # 新分配逻辑：先大章节平均，再大章节内小章节平分
+    final_chapter_dist = {}  # {chapter_id: ratio}
+    if selected_main_chapters and chapter_ids:
+        main_count = len(selected_main_chapters)
+        if main_count == 0:
+            return jsonify({"error": {"message": "未选择大章节", "type": "BadRequest"}}), 400
+        main_ratio = 1.0 / main_count
+        # 查询所有小章节的父章节
+        app = current_app._get_current_object()
+        session = get_session(app)
+        ch = _table("textbook_chapter")
+        # 获取小章节的parent_chapter_id
+        stmt = select(ch.c.chapter_id, ch.c.parent_chapter_id).where(ch.c.chapter_id.in_(chapter_ids))
+        rows = session.execute(stmt).mappings().all()
+        # 按大章节分组
+        group = {}
+        for row in rows:
+            pid = row["parent_chapter_id"]
+            cid = row["chapter_id"]
+            if pid in selected_main_chapters:
+                group.setdefault(pid, []).append(cid)
+        # 分配百分比
+        for pid in selected_main_chapters:
+            sub_ids = group.get(pid, [])
+            if not sub_ids:
+                continue  # 该大章节下没有被选中的小章节
+            sub_ratio = main_ratio / len(sub_ids)
+            for cid in sub_ids:
+                final_chapter_dist[cid] = sub_ratio
     else:
+        # 兼容旧逻辑：全部平均
         avg = 1.0 / len(chapter_ids)
         for cid in chapter_ids:
             final_chapter_dist[int(cid)] = avg
-            
-    # 3. 补齐未设置权重的章节（如果部分设置了，未设置的默认为0？或者平均剩余？这里简化策略：
-    # 如果 chapter_weights 不为空，则只生成权重 > 0 的章节；
-    # 如果 chapter_weights 为空，则所有 chapter_ids 平均分配。
-    # 上面的逻辑已经涵盖了。
-    # 但要注意 chapter_ids 中可能包含 weight_map 中没有的 key
-    if weight_map:
-        # 确保 final_chapter_dist 包含了所有需要生成的章节
-        # 这里策略是：如果有权重配置，则严格按照权重配置来，不在权重里的章节就不生成（或者权重为0）
-        # 但前端传了 chapter_ids，我们应该以 chapter_ids 为准？
-        # 混合策略：chapter_ids 是范围，chapter_weights 是分配。
-        # 如果某个 id 在 chapter_ids 但不在 weights 里，且 weights 不为空，则视为 0？
-        # 用户需求：“选择章节之后还需要输入每个章节的占比”，暗示是全覆盖的。
-        pass
 
     job_id = uuid.uuid4().hex
     with _jobs_lock:
@@ -845,7 +822,6 @@ def generate_questions():
             "seq": 0,
             "events": [],
         }
-
     app = current_app._get_current_object()
     _executor.submit(_run_generation_v2, app, job_id, int(subject_id), final_chapter_dist, validated_rules, create_user)
     return jsonify({"ok": True, "job_id": job_id, "queued": True})
@@ -1098,9 +1074,9 @@ def _run_generation_v2(app, job_id: str, subject_id: int, chapter_dist: dict[int
                     
                     additional_reqs = ""
                     if type_id == 1: # 单选题
-                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须且只能有一个正确答案。\n7) 【强制】题干末尾必须以中文括号（ ）结尾。\n"
+                        additional_reqs = "5) 必须有且只能有4个选项(A/B/C/D)。\n6) 必须有且只能有一个正确答案。\n7) 【强制】题干末尾必须以中文括号（ ）结尾。\n"
                     elif type_id == 7: # 多选题
-                        additional_reqs = "5) 必须且只能有4个选项(A/B/C/D)。\n6) 必须有两个或更多正确答案。\n7) 【强制】题干末尾必须以中文括号（ ）结尾。\n"
+                        additional_reqs = "5) 必须有且只能有4个选项(A/B/C/D)。\n6) 必须有两个或更多正确答案。\n7) 【强制】题干末尾必须以中文括号（ ）结尾。\n"
                     elif type_id == 2: # 判断题
                         additional_reqs = "5) 题干必须是陈述句。\n6) 答案必须是“正确”或“错误”（或T/F）。\n7) 【强制】题干末尾必须以中文括号（ ）结尾。\n"
                     elif type_id == 4: # 计算题
@@ -1207,7 +1183,7 @@ def _run_generation_v2(app, job_id: str, subject_id: int, chapter_dist: dict[int
                             if content_key in seen_contents:
                                 continue
                             seen_contents.add(content_key)
-                            
+
                             answer = _pick_first(it, ["question_answer", "answer", "答案"])
                             analysis = _pick_first(it, ["question_analysis", "analysis", "解析"])
                             score_raw = _pick_first(it, ["question_score", "score", "分值"])
@@ -1670,7 +1646,7 @@ def verify_question():
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 
 
-def _run_parsing(app, job_id: str, text: str, subject_id: int | None, chapter_id: int | None, type_id: int | None, difficulty_id: int | None, create_user: str):
+def _run_parsing(app, job_id: str, text: str, subject_id: Optional[int], chapter_id: Optional[int], type_id: Optional[int], difficulty_id: Optional[int], create_user: str):
     with app.app_context():
         _job_update(job_id, {"status": "running", "started_at": datetime.now().isoformat(timespec="seconds")})
         

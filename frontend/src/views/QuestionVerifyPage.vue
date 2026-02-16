@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref, computed, h } from 'vue'
 import { useMessage, useDialog, NButton } from 'naive-ui'
-import { CheckmarkOutline, TrashOutline, CreateOutline, RefreshOutline, CloseOutline } from '@vicons/ionicons5'
+import { CheckmarkOutline, TrashOutline, CreateOutline, RefreshOutline, CloseOutline, FunnelOutline, ExpandOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getUser } from '../auth'
 
@@ -41,6 +41,8 @@ const detailDialog = reactive({
   visible: false,
   item: null
 })
+
+const filterCollapsed = ref(true)
 
 function openDetail(row) {
   detailDialog.item = row
@@ -248,23 +250,29 @@ function handlePageSizeChange(pageSize) {
           </div>
         </div>
       </template>
-
-      <!-- 筛选区域：标签式布局 -->
       <div class="filter-section">
-        <div class="filter-row">
-          <div class="filter-label">科目</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="s in subjects"
-              :key="s.subject_id"
-              :bordered="false"
-              :class="['filter-tag', pending.subject_id === s.subject_id ? 'tag-selected' : '']"
-              @click="() => { pending.subject_id = pending.subject_id === s.subject_id ? null : s.subject_id; loadPending() }"
-            >
-              {{ s.subject_name }}
-            </n-tag>
-          </div>
+        <div class="filter-section-header filter-section-toggle" @click="filterCollapsed = !filterCollapsed">
+          <n-icon size="16" color="#64748b"><FunnelOutline /></n-icon>
+          <span>条件筛选</span>
+          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><ExpandOutline /></n-icon>
         </div>
+        <template v-if="!filterCollapsed">
+          <!-- 筛选区域：标签式布局 -->
+          <div class="filter-row">
+            <div class="filter-label">科目</div>
+            <div class="filter-content filter-tags">
+              <n-tag
+                v-for="s in subjects"
+                :key="s.subject_id"
+                :bordered="false"
+                :class="['filter-tag', pending.subject_id === s.subject_id ? 'tag-selected' : '']"
+                @click="() => { pending.subject_id = pending.subject_id === s.subject_id ? null : s.subject_id; loadPending() }"
+              >
+                {{ s.subject_name }}
+              </n-tag>
+            </div>
+          </div>
+        </template>
       </div>
 
       <n-data-table
@@ -371,7 +379,7 @@ function handlePageSizeChange(pageSize) {
   justify-content: space-between;
 }
 
-/* 标签式筛选区域样式 */
+/* 筛选区域样式 */
 .filter-section {
   display: flex;
   flex-direction: column;
@@ -380,6 +388,28 @@ function handlePageSizeChange(pageSize) {
   background: var(--n-color-embedded);
   border-radius: 12px;
   margin-bottom: 16px;
+}
+
+.filter-section-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--n-text-color-2);
+  line-height: 28px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.filter-section-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+}
+
+.filter-section-toggle:hover {
+  background: rgba(100,116,139,0.06);
+  border-radius: 8px;
 }
 
 .filter-row {

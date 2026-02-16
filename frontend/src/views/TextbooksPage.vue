@@ -1,7 +1,7 @@
-<script setup>
+﻿<script setup>
 import { computed, onMounted, reactive, ref, watch, h } from 'vue'
 import { useMessage, useDialog } from 'naive-ui'
-import { RefreshOutline, AddOutline, SettingsOutline, CreateOutline, TrashOutline, CloudUploadOutline, SparklesOutline, CheckmarkOutline, CloseOutline, DownloadOutline } from '@vicons/ionicons5'
+import { RefreshOutline, AddOutline, SettingsOutline, CreateOutline, TrashOutline, CloudUploadOutline, SparklesOutline, CheckmarkOutline, CloseOutline, DownloadOutline, FunnelOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 
 const message = useMessage()
@@ -20,9 +20,8 @@ const selectedPublisher = ref(null)
 
 const filteredTextbooks = computed(() => {
   return textbooks.value.filter(t => {
-    const matchId = !filterTextbookId.value || t.textbook_id === filterTextbookId.value
     const matchPub = !selectedPublisher.value || t.publisher === selectedPublisher.value
-    return matchId && matchPub
+    return matchPub
   })
 })
 
@@ -135,7 +134,7 @@ async function importChaptersExcel({ file }) {
     const resp = await http.post(`/textbooks/${selectedTextbook.value.textbook_id}/chapters/import/excel`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
-    message.success(`导入完成：新增${resp.data.inserted}，跳过${resp.data.skipped}`)
+    message.success(`导入完成：新增{resp.data.inserted}，跳过{resp.data.skipped}`)
     await loadChapters(selectedTextbook.value.textbook_id)
   } catch (e) {
     message.error(e?.message || '导入失败')
@@ -240,7 +239,7 @@ async function submitTextbook() {
 async function removeTextbook(row) {
   dialog.warning({
     title: '提示',
-    content: `确认删除教材：${row.textbook_name}？`,
+    content: `确认删除教材：{row.textbook_name}？`,
     positiveText: '确认',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -330,7 +329,7 @@ async function removeChapter() {
   }
   dialog.warning({
     title: '提示',
-    content: `确认删除章节：${selectedChapter.value.chapter_name}？`,
+    content: `确认删除章节：{selectedChapter.value.chapter_name}？`,
     positiveText: '确认',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -395,6 +394,8 @@ const tableColumns = [
     }
   }
 ]
+
+const filterCollapsed = ref(true)
 </script>
 
 <template>
@@ -412,54 +413,59 @@ const tableColumns = [
           </n-button>
         </div>
       </template>
-
-      <!-- 筛选区域：标签式布局 -->
       <div class="filter-section">
-        <div class="filter-row">
-          <div class="filter-label">科目</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="s in subjects"
-              :key="s.subject_id"
-              :bordered="false"
-              :class="['filter-tag', filter.subject_id === s.subject_id ? 'tag-selected' : '']"
-              @click="() => { filter.subject_id = filter.subject_id === s.subject_id ? null : s.subject_id; filterTextbookId = null; loadTextbooks() }"
-            >
-              {{ s.subject_name }}
-            </n-tag>
-          </div>
+        <div class="filter-section-header filter-section-toggle" @click="filterCollapsed = !filterCollapsed">
+          <n-icon size="16" color="#64748b"><FunnelOutline /></n-icon>
+          <span>筛选条件</span>
+          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><ExpandOutline /></n-icon>
         </div>
+        <template v-if="!filterCollapsed">
+          <div class="filter-row">
+            <div class="filter-label">科目</div>
+            <div class="filter-content filter-tags">
+              <n-tag
+                v-for="s in subjects"
+                :key="s.subject_id"
+                :bordered="false"
+                :class="['filter-tag', filter.subject_id === s.subject_id ? 'tag-selected' : '']"
+                @click="() => { filter.subject_id = filter.subject_id === s.subject_id ? null : s.subject_id; filterTextbookId = null; loadTextbooks() }"
+              >
+                {{ s.subject_name }}
+              </n-tag>
+            </div>
+          </div>
 
-        <div class="filter-row" v-if="filteredTextbooks.length > 0">
-          <div class="filter-label">教材</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="t in filteredTextbooks.slice(0, 20)"
-              :key="t.textbook_id"
-              :bordered="false"
-              :class="['filter-tag', filterTextbookId === t.textbook_id ? 'tag-selected' : '']"
-              @click="() => { filterTextbookId = filterTextbookId === t.textbook_id ? null : t.textbook_id }"
-            >
-              {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
-            </n-tag>
-            <span v-if="filteredTextbooks.length > 20" class="more-hint">还有 {{ filteredTextbooks.length - 20 }} 个...</span>
+          <div class="filter-row" v-if="publisherOptions.length > 0">
+            <div class="filter-label">出版社</div>
+            <div class="filter-content filter-tags">
+              <n-tag
+                v-for="p in publisherOptions"
+                :key="p.value"
+                :bordered="false"
+                :class="['filter-tag', selectedPublisher === p.value ? 'tag-selected' : '']"
+                @click="() => { selectedPublisher = selectedPublisher === p.value ? null : p.value }"
+              >
+                {{ p.label }}
+              </n-tag>
+            </div>
           </div>
-        </div>
 
-        <div class="filter-row" v-if="publisherOptions.length > 0">
-          <div class="filter-label">出版社</div>
-          <div class="filter-content filter-tags">
-            <n-tag
-              v-for="p in publisherOptions"
-              :key="p.value"
-              :bordered="false"
-              :class="['filter-tag', selectedPublisher === p.value ? 'tag-selected' : '']"
-              @click="() => { selectedPublisher = selectedPublisher === p.value ? null : p.value }"
-            >
-              {{ p.label }}
-            </n-tag>
+          <div class="filter-row" v-if="filteredTextbooks.length > 0">
+            <div class="filter-label">教材</div>
+            <div class="filter-content filter-tags">
+              <n-tag
+                v-for="t in filteredTextbooks.slice(0, 20)"
+                :key="t.textbook_id"
+                :bordered="false"
+                :class="['filter-tag', filterTextbookId === t.textbook_id ? 'tag-selected' : '']"
+                @click="() => { filterTextbookId = filterTextbookId === t.textbook_id ? null : t.textbook_id }"
+              >
+                {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
+              </n-tag>
+              <span v-if="filteredTextbooks.length > 20" class="more-hint">还有 {{ filteredTextbooks.length - 20 }} 个..</span>
+            </div>
           </div>
-        </div>
+        </template>
       </div>
 
       <n-data-table
@@ -648,6 +654,37 @@ const tableColumns = [
   gap: 10px;
 }
 
+:deep(.n-button) {
+  border-radius: 14px;
+}
+
+:deep(.n-data-table) {
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+}
+
+:deep(.n-data-table .n-data-table-th) {
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.9));
+  font-weight: 600;
+  color: #334155;
+}
+
+:deep(.n-data-table .n-data-table-td),
+:deep(.n-data-table .n-data-table-th) {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+}
+
+:deep(.n-data-table .n-data-table-tr:nth-child(even) .n-data-table-td) {
+  background: rgba(248, 250, 252, 0.7);
+}
+
+:deep(.n-data-table .n-data-table-tr:hover .n-data-table-td) {
+  background: rgba(226, 232, 240, 0.6);
+}
+
 /* 标签式筛选区域样式 */
 .filter-section {
   display: flex;
@@ -657,6 +694,30 @@ const tableColumns = [
   background: var(--n-color-embedded);
   border-radius: 12px;
   margin-bottom: 16px;
+}
+
+.filter-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.15);
+}
+
+.filter-section-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+}
+
+.filter-section-toggle:hover {
+  background: rgba(100,116,139,0.06);
+  border-radius: 8px;
 }
 
 .filter-row {
@@ -716,3 +777,4 @@ const tableColumns = [
   color: var(--n-text-color-3);
 }
 </style>
+

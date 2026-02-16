@@ -1,0 +1,26 @@
+@font-face {
+  font-family: 'OPPO Sans';
+  src: url('/OPPO Sans 4.0.ttf') format('truetype');
+  font-weight: bold;
+  font-style: normal;
+}
+
+:root {
+  font-family: 'OPPO Sans', system-ui, Avenir, Helvetica, Arial, sans-serif !important;
+  font-weight: bold !important;
+  font-style: normal !important;
+  /* ...existing code... */
+}
+
+body, html, * {
+  font-family: 'OPPO Sans', system-ui, Avenir, Helvetica, Arial, sans-serif !important;
+  font-weight: bold !important;
+  font-style: normal !important;
+}
+
+em, i {
+  font-style: normal !important;
+  font-weight: bold !important;
+}
+
+/* ...existing code... */
