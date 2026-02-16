@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch, nextTick } from 'vue'
 import { useMessage } from 'naive-ui'
-import { DownloadOutline, PrintOutline, DocumentOutline } from '@vicons/ionicons5'
+import { DownloadOutline, PrintOutline, DocumentOutline, ChevronBackOutline, ChevronForwardOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 
 const message = useMessage()
@@ -17,6 +17,7 @@ const paperSize = ref('A4')
 const pages = ref([])
 const isCalculating = ref(false)
 const measureRef = ref(null)
+const isSidebarCollapsed = ref(false)
 
 const emit = defineEmits(['update:visible'])
 
@@ -37,144 +38,129 @@ async function calculateLayout() {
     isCalculating.value = false
     return
   }
-  
-  container.style.cssText = 'position:absolute; visibility:hidden; height:297mm; width:210mm; padding:0; border:none; margin:0;'
-  const height297mm = container.offsetHeight
-  
-  container.style.height = '25.4mm'
-  const paddingA4 = container.offsetHeight
-  const contentHeightA4 = height297mm - (paddingA4 * 2)
-  const contentWidthA4 = container.offsetWidth - (paddingA4 * 2)
-
-  container.style.height = '15mm'
-  const paddingA3 = container.offsetHeight
-  const contentHeightA3 = height297mm - (paddingA3 * 2)
-  container.style.width = '420mm'
-  const width420mm = container.offsetWidth
-  const fullContentWidthA3 = width420mm - (paddingA3 * 2)
-  const gap30px = 30
-  const colWidthA3 = (fullContentWidthA3 - gap30px) / 2
-  
-  container.style.cssText = 'position:absolute; visibility:hidden; top:-9999px; left:-9999px;'
-  container.className = 'paper-content'
-
-  const resetMeasureStyle = () => {
-    container.style.height = 'auto'
-    container.style.minHeight = '0'
-    container.style.maxHeight = 'none'
-    container.style.columnCount = 'auto'
-    container.style.overflow = 'visible'
-    container.style.padding = '0'
-    container.style.border = 'none'
-    container.style.margin = '0'
+  // 使用与实际预览一致的样式进行测量，避免 mm->px 的换算误差
+  container.className = 'measure-box paper-content'
+  if (paperSize.value === 'A3') {
+    container.classList.add('is-a3')
+  } else {
+    container.classList.remove('is-a3')
   }
-  
+  container.style.visibility = 'hidden'
+  container.style.position = 'absolute'
+  container.style.top = '-9999px'
+  container.style.left = '-9999px'
+  container.innerHTML = ''
+
+  const isA3Mode = paperSize.value === 'A3'
+  const maxColsPerPage = isA3Mode ? 2 : 1
+  const style = window.getComputedStyle(container)
+  const pageHeight = container.clientHeight
+  const pageWidth = container.clientWidth
+  const columnGap = isA3Mode ? (parseFloat(style.columnGap) || 30) : 0
+  const columnWidth = isA3Mode ? (pageWidth - columnGap) / 2 : pageWidth
+
+  // 计算页眉高度（仅第一页展示）
   const getHeaderHtml = () => `
-    <h1 style="text-align: center; margin-bottom: 20px;">${props.paper?.paper_name || ''}</h1>
-    ${props.paper?.paper_desc ? `<p class="paper-meta" style="margin-bottom: 20px; text-indent: 2em;">${props.paper.paper_desc}</p>` : ''}
-    <p class="paper-meta" style="margin-bottom: 20px; text-align: center;">
-        时长：${props.paper?.exam_duration || 0}分钟 &nbsp;&nbsp; 
-        ${props.paper?.is_closed_book ? '闭卷' : '开卷'} &nbsp;&nbsp;
-        总分：${props.paper?.total_score || 0}
-    </p>
+    <h1 class="paper-title" style="margin-bottom: 16px;">${props.paper?.paper_name || ''}</h1>
+    ${props.paper?.paper_desc ? `<p class="paper-desc" style="margin-bottom: 16px;">${props.paper.paper_desc}</p>` : ''}
+    <div class="paper-meta" style="margin-bottom: 16px;">
+      <span class="meta-item"><strong>时长：</strong>${props.paper?.exam_duration || 0}分钟</span>
+      <span class="meta-divider">|</span>
+      <span class="meta-item"><strong>形式：</strong>${props.paper?.is_closed_book ? '闭卷' : '开卷'}</span>
+      <span class="meta-divider">|</span>
+      <span class="meta-item"><strong>总分：</strong>${props.paper?.total_score || 0}分</span>
+    </div>
   `
-  
-  resetMeasureStyle()
-  container.innerHTML = getHeaderHtml()
-  if (paperSize.value === 'A3') {
-    container.style.width = fullContentWidthA3 + 'px'
-  } else {
-    container.style.width = contentWidthA4 + 'px'
-  }
-  const headerHeight = container.offsetHeight
-  
+  const headerProbe = document.createElement('div')
+  headerProbe.style.width = pageWidth + 'px'
+  headerProbe.innerHTML = getHeaderHtml()
+  container.appendChild(headerProbe)
+  const headerHeight = headerProbe.offsetHeight
+  container.removeChild(headerProbe)
+
+  // 为题目测量准备单列容器（A3 测量为单列宽度）
+  const measureCol = document.createElement('div')
+  measureCol.style.width = columnWidth + 'px'
+  container.appendChild(measureCol)
+
   const questions = props.questions || []
-  const questionHeights = []
-  
-  resetMeasureStyle()
-  if (paperSize.value === 'A3') {
-    container.style.width = colWidthA3 + 'px'
-  } else {
-    container.style.width = contentWidthA4 + 'px'
-  }
-  
-  for (let q of questions) {
-    container.innerHTML = `
-      <div class="q-item" style="margin-bottom: 15px;">
-        <p class="q-title">
-          <strong>${q.question_sort}. </strong>
-          ${q.question_score ? `<span>（${q.question_score}分）</span>` : ''}
-          <span>${formatQuestionContent(q.question_content)}</span>
-        </p>
-        ${showAnswers.value ? `
-          <div class="q-answer-section" style="margin-top: 8px; padding: 10px;">
-            ${q.question_answer ? `<p><strong>答案：</strong>${q.question_answer}</p>` : ''}
-            ${q.question_analysis ? `<p><strong>解析：</strong>${q.question_analysis}</p>` : ''}
-          </div>
-        ` : ''}
+  const qHeights = []
+  for (const q of questions) {
+    measureCol.innerHTML = `
+      <div class="q-item" style="margin-bottom: 24px;">
+        <div class="q-header">
+          <span class="q-number">${q.question_sort}</span>
+          ${q.question_score ? `<span class="q-score">${q.question_score}分</span>` : ''}
+        </div>
+        <div class="q-content">${formatQuestionContent(q.question_content)}</div>
+        ${
+          showAnswers.value
+            ? `<div class="q-answer-section">
+                 ${q.question_answer ? `<div class="answer-row"><span class="answer-label">答案</span><span class="answer-text">${q.question_answer}</span></div>` : ''}
+                 ${q.question_analysis ? `<div class="answer-row"><span class="answer-label">解析</span><span class="answer-text">${q.question_analysis}</span></div>` : ''}
+               </div>`
+            : ''
+        }
       </div>
     `
-    const child = container.firstElementChild
-    const style = window.getComputedStyle(child)
-    const mt = parseFloat(style.marginTop) || 0
-    const mb = parseFloat(style.marginBottom) || 0
-    questionHeights.push(child.offsetHeight + mt + mb)
+    const el = measureCol.firstElementChild
+    const styles = window.getComputedStyle(el)
+    const mt = parseFloat(styles.marginTop) || 0
+    const mb = parseFloat(styles.marginBottom) || 0
+    qHeights.push(el.offsetHeight + mt + mb)
   }
-  
-  const isA3Mode = paperSize.value === 'A3'
-  const maxColHeight = isA3Mode ? contentHeightA3 : contentHeightA4
-  const maxColsPerPage = isA3Mode ? 2 : 1
-  const SAFETY = 5
-  
-  let currentPages = []
-  let currentPageQuestions = []
-  let colsUsedOnPage = 0
-  let currentColHeight = 0
-  let availableHeightOnPage = maxColHeight - headerHeight - SAFETY
-  if (availableHeightOnPage < 0) availableHeightOnPage = 0
-  
+  container.removeChild(measureCol)
+
+  const SAFETY = 12
+  const availableFirstPage = Math.max(0, pageHeight - headerHeight - SAFETY)
+  const availableNormalPage = Math.max(0, pageHeight - SAFETY)
+
+  const resultPages = []
+  let currentQuestions = []
+  let currentHeight = 0
+  let colsUsed = 0
+  let available = availableFirstPage
+
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i]
-    const h = questionHeights[i]
-
-    if (currentColHeight + h <= availableHeightOnPage) {
-      currentPageQuestions.push(q)
-      currentColHeight += h
-    } else {
-      colsUsedOnPage++
-
-      if (colsUsedOnPage < maxColsPerPage) {
-        currentColHeight = 0
-        if (h <= availableHeightOnPage) {
-          currentPageQuestions.push(q)
-          currentColHeight += h
-        } else {
-          if (availableHeightOnPage < maxColHeight && h <= maxColHeight - SAFETY) {
-            currentPages.push({ questions: currentPageQuestions, hasHeader: currentPages.length === 0 })
-            currentPageQuestions = [q]
-            colsUsedOnPage = 0
-            currentColHeight = h
-            availableHeightOnPage = maxColHeight - SAFETY
-          } else {
-            currentPageQuestions.push(q)
-            currentColHeight += h
-          }
-        }
-      } else {
-        currentPages.push({ questions: currentPageQuestions, hasHeader: currentPages.length === 0 })
-        currentPageQuestions = [q]
-        colsUsedOnPage = 0
-        currentColHeight = h
-        availableHeightOnPage = maxColHeight - SAFETY
-      }
+    const h = qHeights[i]
+    if (currentHeight + h <= available) {
+      currentQuestions.push(q)
+      currentHeight += h
+      continue
     }
+
+    // 当前列容不下，尝试同页下一列（A3）
+    if (isA3Mode && colsUsed < maxColsPerPage - 1) {
+      colsUsed += 1
+      currentHeight = 0
+      available = availableNormalPage
+      if (h <= available) {
+        currentQuestions.push(q)
+        currentHeight += h
+      } else {
+        // 单题超出列高，仍放入当前列，避免一页仅一题
+        currentQuestions.push(q)
+        currentHeight = h
+      }
+      continue
+    }
+
+    // 换页
+    resultPages.push({ questions: currentQuestions, hasHeader: resultPages.length === 0 })
+    currentQuestions = [q]
+    colsUsed = 0
+    currentHeight = h
+    // 如果是第一页换到第二页，高度应重置为 NormalPage
+    // 但如果本来就是 NormalPage，这里也是 NormalPage
+    available = availableNormalPage
   }
-  
-  if (currentPageQuestions.length > 0) {
-    currentPages.push({ questions: currentPageQuestions, hasHeader: currentPages.length === 0 })
+
+  if (currentQuestions.length > 0) {
+    resultPages.push({ questions: currentQuestions, hasHeader: resultPages.length === 0 })
   }
-  
-  pages.value = currentPages
+
+  pages.value = resultPages
   isCalculating.value = false
 }
 
@@ -381,9 +367,17 @@ function scrollToPage(index) {
 
     <div class="preview-container">
       <!-- 左侧信息面板 -->
-      <aside class="info-panel">
-        <div class="paper-info">
-          <h3 class="info-title">试卷信息</h3>
+      <aside class="info-panel" :class="{ 'collapsed': isSidebarCollapsed }">
+        <div class="toggle-btn" @click="isSidebarCollapsed = !isSidebarCollapsed">
+          <n-icon size="16">
+            <ChevronForwardOutline v-if="isSidebarCollapsed" />
+            <ChevronBackOutline v-else />
+          </n-icon>
+        </div>
+        
+        <div class="info-content">
+          <div class="paper-info">
+            <h3 class="info-title">试卷信息</h3>
           <div class="info-item">
             <span class="info-label">试卷名称</span>
             <span class="info-value">{{ paper?.paper_name || '-' }}</span>
@@ -426,6 +420,7 @@ function scrollToPage(index) {
             暂无页面
           </div>
         </div>
+        </div>
       </aside>
 
       <!-- 主预览区 -->
@@ -452,6 +447,7 @@ function scrollToPage(index) {
             :key="index"
             :id="'page-' + index"
             class="page-wrapper"
+            :class="{ 'is-a3-wrapper': paperSize === 'A3' }"
           >
             <!-- 页码标签 -->
             <div class="page-label">
@@ -567,11 +563,56 @@ function scrollToPage(index) {
   flex-shrink: 0;
   background: #fff;
   border-right: 1px solid #e8e8e8;
-  padding: 24px 20px;
+  border-radius: 16px 0 0 16px;
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.info-panel.collapsed {
+  width: 12px;
+  background: #f5f7fa;
+  border-right: 1px solid #dcdfe6;
+}
+
+.toggle-btn {
+  position: absolute;
+  top: 50%;
+  right: -12px;
+  width: 24px;
+  height: 24px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  color: #666;
+  transform: translateY(-50%);
+  transition: all 0.2s;
+}
+
+.toggle-btn:hover {
+  color: #2080f0;
+  border-color: #2080f0;
+  transform: translateY(-50%) scale(1.1);
+}
+
+.info-content {
+  width: 240px;
+  height: 100%;
   overflow-y: auto;
+  padding: 24px 20px;
   display: flex;
   flex-direction: column;
-  border-radius: 16px 0 0 16px;
+  transition: opacity 0.2s;
+}
+
+.info-panel.collapsed .info-content {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .info-title {
@@ -764,6 +805,15 @@ function scrollToPage(index) {
   flex-direction: column;
   align-items: center;
   animation: fadeInUp 0.4s ease;
+  width: 100%;
+}
+
+.page-wrapper.is-a3-wrapper {
+  /* A3 模式下对内容进行缩放以适应屏幕 */
+  transform: scale(0.7);
+  transform-origin: top center;
+  /* 缩放后高度变小，通过负 margin 修正占位 */
+  margin-bottom: -30%;
 }
 
 @keyframes fadeInUp {
@@ -817,10 +867,15 @@ function scrollToPage(index) {
   width: 420mm;
   height: 297mm;
   padding: 15mm;
-  column-count: 2;
+  /* 强制两栏，禁止多余栏 */
+  column-count: 2 !important;
+  -webkit-column-count: 2 !important;
+  -moz-column-count: 2 !important;
   column-gap: 30px;
   column-rule: 1px solid #e5e5e5;
-  column-fill: auto;
+  column-fill: balance;
+  /* 避免内容溢出产生新栏 */
+  max-width: 420mm;
 }
 
 /* 试卷头部 */
