@@ -426,18 +426,22 @@ const tableColumns = [
     </n-card>
 
     <n-drawer v-model:show="showPaperDrawer" :width="isDrawerFullscreen ? '100%' : 600" placement="right">
-      <n-drawer-content :title="mode === 'export' ? '试卷编辑与导出' : '试卷审核'">
-        <template #header-extra>
-          <div class="header-actions">
-            <n-button v-if="mode === 'export'" :disabled="!selectedPaperId || paper?.review_status !== 1" size="small" @click="showPreview = true">
-              <template #icon><n-icon><EyeOutline /></n-icon></template>
-              导出预览
-            </n-button>
-            <n-button text @click="isDrawerFullscreen = !isDrawerFullscreen">
-              <template #icon><n-icon><ExpandOutline /></n-icon></template>
-            </n-button>
-          </div>
+      <n-drawer-content>
+        <template #header>
+            <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                <span>{{ mode === 'export' ? '试卷编辑与导出' : '试卷审核' }}</span>
+                <div class="header-actions">
+                    <n-button v-if="mode === 'export'" :disabled="!selectedPaperId || paper?.review_status !== 1" size="small" @click="showPreview = true">
+                    <template #icon><n-icon><EyeOutline /></n-icon></template>
+                    导出预览
+                    </n-button>
+                    <n-button text @click="isDrawerFullscreen = !isDrawerFullscreen">
+                    <template #icon><n-icon><ExpandOutline /></n-icon></template>
+                    </n-button>
+                </div>
+            </div>
         </template>
+
 
         <div v-if="!selectedPaperId" class="placeholder">选择左侧试卷进行编辑与导出</div>
 
