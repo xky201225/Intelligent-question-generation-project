@@ -297,6 +297,14 @@ function enqueueOutput(text) {
         const count = matches ? matches.length : 0
         stream.generatedCount = Math.max(stream.generatedCount, count)
         stream.progress = Math.min(100, Math.floor((stream.generatedCount / stream.totalCount) * 100))
+        
+        // Auto scroll to latest question
+        requestAnimationFrame(() => {
+             const streamBody = streamBodyRef.value
+             if (streamBody) {
+                 streamBody.scrollTop = streamBody.scrollHeight
+             }
+        })
       }
       requestAnimationFrame(() => { if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight })
     }, 16)
@@ -350,8 +358,14 @@ function startStream(jobId) {
           if (ev.type === 'job_start' && ev.data?.total_count) stream.totalCount = ev.data.total_count
           else if (ev.type === 'job_done') {
             stream.status = 'done'; stream.currentStage = '生成完成'; stream.progress = 100; stream.generatedCount = stream.totalCount
-            stopStream(); fetchJobDetails(stream.job_id)
+            stopStream(); await fetchJobDetails(stream.job_id)
             setTimeout(() => { stream.visible = false }, 1500)
+            
+            // Scroll to result
+            nextTick(() => {
+                const el = document.getElementById('generated-result-card')
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            })
           } else if (ev.type === 'job_error') {
             stream.status = 'error'; stream.currentStage = '生成出错'; stopStream()
           }
@@ -359,8 +373,14 @@ function startStream(jobId) {
       }
       if (job.status === 'done' && stream.status !== 'done' && newEvents.length === 0) {
         stream.status = 'done'; stream.currentStage = '生成完成'; stream.progress = 100
-        stopStream(); fetchJobDetails(stream.job_id)
+        stopStream(); await fetchJobDetails(stream.job_id)
         setTimeout(() => { stream.visible = false }, 1500)
+        
+        // Scroll to result
+        nextTick(() => {
+            const el = document.getElementById('generated-result-card')
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        })
       } else if (job.status === 'error' && stream.status !== 'error' && newEvents.length === 0) {
         stream.status = 'error'; stream.currentStage = '生成出错'; stopStream()
       }
@@ -735,7 +755,7 @@ const resultTableColumns = [
       </div>
     </n-card>
 
-    <n-card v-if="generated.items.length > 0">
+    <n-card v-if="generated.items.length > 0" id="generated-result-card">
       <template #header>
         <div class="header">
           <span>本次生成结果 ({{ generated.items.length }})</span>

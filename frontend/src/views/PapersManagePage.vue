@@ -755,7 +755,9 @@ const tableColumns = [
 }
 
 .empty-hint {
-  font-size: 12px;
-  color: var(--n-text-color-3);
+  font-size: 13px;
+  color: #94a3b8;
+  font-style: italic;
+  padding: 4px 0;
 }
 </style>
