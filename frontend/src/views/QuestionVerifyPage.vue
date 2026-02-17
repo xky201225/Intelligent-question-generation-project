@@ -21,6 +21,8 @@ const pending = reactive({
   subject_id: null,
 })
 
+const checkedRowKeys = ref([])
+
 const editDialog = reactive({
   visible: false,
   form: {
@@ -90,6 +92,7 @@ async function loadPending() {
     const resp = await http.get('/ai/pending', { params })
     pending.items = resp.data.items || []
     pending.total = resp.data.total || 0
+    checkedRowKeys.value = []
   } catch (e) {
     message.error(e?.message || '加载失败')
   } finally {
@@ -111,6 +114,53 @@ async function approveAll() {
           reviewer: user ? user.name : 'reviewer',
         })
         message.success(`已批量通过 ${resp.data.count} 道题目`)
+        await loadPending()
+      } catch (e) {
+        message.error(e?.message || '操作失败')
+      }
+    }
+  })
+}
+
+async function batchApprove() {
+  if (checkedRowKeys.value.length === 0) return
+  
+  dialog.warning({
+    title: '提示',
+    content: `确定要通过选中的 ${checkedRowKeys.value.length} 道题目吗？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const user = getUser()
+        const resp = await http.post('/ai/verify/batch', {
+          action: 'approve_selected',
+          reviewer: user ? user.name : 'reviewer',
+          ids: checkedRowKeys.value
+        })
+        message.success(`已批量通过 ${resp.data.count} 道题目`)
+        await loadPending()
+      } catch (e) {
+        message.error(e?.message || '操作失败')
+      }
+    }
+  })
+}
+
+async function batchDelete() {
+  if (checkedRowKeys.value.length === 0) return
+
+  dialog.warning({
+    title: '提示',
+    content: `确定要删除选中的 ${checkedRowKeys.value.length} 道题目吗？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await http.post('/questions/batch-delete', {
+          ids: checkedRowKeys.value
+        })
+        message.success('已批量删除')
         await loadPending()
       } catch (e) {
         message.error(e?.message || '操作失败')
@@ -191,6 +241,7 @@ function treeToOptions(tree) {
 const chapterCascaderOptions = computed(() => treeToOptions(chapterTree.value))
 
 const tableColumns = [
+  { type: 'selection' },
   { title: 'ID', key: 'question_id', width: 80 },
   { title: '科目', key: 'subject_name', width: 120 },
   { title: '章节', key: 'chapter_name', width: 150, ellipsis: { tooltip: true } },
@@ -239,14 +290,26 @@ function handlePageSizeChange(pageSize) {
         <div class="header">
           <span>待校验题目</span>
           <div style="display: flex; gap: 8px">
-            <n-button type="success" @click="approveAll">
-              <template #icon><n-icon><CheckmarkOutline /></n-icon></template>
-              一键全部通过
-            </n-button>
-            <n-button @click="loadPending">
-              <template #icon><n-icon><RefreshOutline /></n-icon></template>
-              刷新
-            </n-button>
+            <template v-if="checkedRowKeys.length > 0">
+              <n-button type="success" @click="batchApprove">
+                <template #icon><n-icon><CheckmarkOutline /></n-icon></template>
+                批量通过({{ checkedRowKeys.length }})
+              </n-button>
+              <n-button type="error" @click="batchDelete">
+                <template #icon><n-icon><TrashOutline /></n-icon></template>
+                批量删除({{ checkedRowKeys.length }})
+              </n-button>
+            </template>
+            <template v-else>
+              <n-button type="success" @click="approveAll">
+                <template #icon><n-icon><CheckmarkOutline /></n-icon></template>
+                一键全部通过
+              </n-button>
+              <n-button @click="loadPending">
+                <template #icon><n-icon><RefreshOutline /></n-icon></template>
+                刷新
+              </n-button>
+            </template>
           </div>
         </div>
       </template>
@@ -280,6 +343,8 @@ function handlePageSizeChange(pageSize) {
         :data="pending.items"
         :loading="loading"
         :max-height="500"
+        :row-key="row => row.question_id"
+        v-model:checked-row-keys="checkedRowKeys"
       />
 
       <div class="pager">

@@ -77,7 +77,7 @@ def search_questions():
     review_status = request.args.get("review_status", type=int)
 
     page = max(1, request.args.get("page", default=1, type=int))
-    page_size = min(100, max(1, request.args.get("page_size", default=20, type=int)))
+    page_size = min(1000, max(1, request.args.get("page_size", default=20, type=int)))
 
     t = _table("question_bank")
     ch = _table("textbook_chapter")

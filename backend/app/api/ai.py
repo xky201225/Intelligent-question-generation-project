@@ -1874,19 +1874,27 @@ def verify_batch():
     payload = request.get_json(silent=True) or {}
     action = payload.get("action")
     reviewer = payload.get("reviewer") or "reviewer"
+    ids = payload.get("ids") or []
     
-    if action != "approve_all_pending":
-        return jsonify({"error": {"message": "不支持的操作", "type": "BadRequest"}}), 400
-
     qb = _table("question_bank")
     now = datetime.now()
     
-    # 批量更新所有 review_status=0 的题目为 1
-    stmt = (
-        update(qb)
-        .where(qb.c.review_status == 0)
-        .values(review_status=1, reviewer=reviewer, review_time=now)
-    )
+    if action == "approve_all_pending":
+        stmt = (
+            update(qb)
+            .where(qb.c.review_status == 0)
+            .values(review_status=1, reviewer=reviewer, review_time=now)
+        )
+    elif action == "approve_selected":
+        if not ids:
+             return jsonify({"error": {"message": "ids 不能为空", "type": "BadRequest"}}), 400
+        stmt = (
+            update(qb)
+            .where(qb.c.question_id.in_(ids))
+            .values(review_status=1, reviewer=reviewer, review_time=now)
+        )
+    else:
+        return jsonify({"error": {"message": "不支持的操作", "type": "BadRequest"}}), 400
     
     try:
         session = get_session(current_app)

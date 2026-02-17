@@ -180,10 +180,11 @@ if not exist "frontend" (
 )
 cd "frontend"
 
-echo     - Installing frontend dependencies (this may take a while)...
-call npm install
+echo     - Installing frontend dependencies (using npmmirror for better connectivity)...
+call npm install --registry=https://registry.npmmirror.com
 if %errorlevel% neq 0 (
     echo [ERROR] npm install failed.
+    echo [TIP] Try running "npm install" manually in the frontend directory.
     pause
     exit /b 1
 )

@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, onUnmounted, reactive, ref, computed, watch, nextTick, h } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { useMessage, useDialog, NButton, NTag, NSelect, NInputNumber } from 'naive-ui'
+import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
+import { useMessage, useDialog, NButton, NTag, NSelect, NInputNumber, NCascader } from 'naive-ui'
 import { PlayOutline, AddOutline, TrashOutline, CloseOutline, RefreshOutline, CloudUploadOutline, FunnelOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getToken, getUser } from '../auth'
@@ -44,6 +44,14 @@ const stream = reactive({
 })
 
 const generated = reactive({ items: [], loading: false })
+const resultPagination = reactive({
+  page: 1,
+  pageSize: 10,
+  showSizePicker: true,
+  pageSizes: [5, 10, 20, 50, 100],
+  onChange: (page) => { resultPagination.page = page },
+  onUpdatePageSize: (pageSize) => { resultPagination.pageSize = pageSize; resultPagination.page = 1 }
+})
 const detailDialog = reactive({ visible: false, item: null })
 
 function openDetail(row) {
@@ -257,8 +265,9 @@ async function loadGeneratedQuestions(ids) {
   if (!ids || ids.length === 0) return
   generated.loading = true
   try {
-    const resp = await http.get('/questions', { params: { ids: ids.join(',') } })
+    const resp = await http.get('/questions', { params: { ids: ids.join(','), page_size: 1000 } })
     generated.items = resp.data.items || []
+    resultPagination.page = 1
   } catch {} finally { generated.loading = false }
 }
 
@@ -545,19 +554,91 @@ function treeToOptions(tree) {
 }
 const chapterCascaderOptions = computed(() => treeToOptions(chapterTree.value))
 
-const resultTableColumns = [
-  { title: 'ID', key: 'question_id', width: 80 },
-  { title: '科目', key: 'subject_name', width: 120 },
-  { title: '章节', key: 'chapter_name', width: 150, ellipsis: { tooltip: true } },
-  { title: '题型', key: 'type_name', width: 100 },
-  { title: '难度', key: 'difficulty_name', width: 80 },
-  { title: '题目内容', key: 'question_content', ellipsis: { tooltip: true }, render: row => h('div', { style: 'cursor: pointer', onClick: () => openDetail(row) }, row.question_content?.substring(0, 60)) },
-  { title: '状态', key: 'review_status', width: 100, render: row => {
-    if (row.review_status === 0) return h(NTag, { type: 'warning' }, { default: () => '待校验' })
-    if (row.review_status === 1) return h(NTag, { type: 'success' }, { default: () => '已通过' })
-    return h(NTag, { type: 'error' }, { default: () => '已拒绝' })
-  }}
-]
+const resultTableColumns = computed(() => {
+  const isEditable = activeTab.value === 'file'
+  return [
+    { title: 'ID', key: 'question_id', width: 80 },
+    { title: '科目', key: 'subject_name', width: 120 },
+    { 
+      title: '章节', 
+      key: 'chapter_id', 
+      width: 200, 
+      render: (row) => {
+        if (isEditable) {
+           return h(NCascader, {
+             value: row.chapter_id,
+             options: chapterCascaderOptions.value,
+             placeholder: '请选择章节',
+             checkStrategy: 'child',
+             size: 'small',
+             showPath: true,
+             onUpdateValue: (v, opt) => {
+               row.chapter_id = v
+               row.chapter_name = opt ? opt.label : ''
+               handleRowChange(row)
+             }
+           })
+        }
+        return h('span', {}, row.chapter_name || '未设置')
+      }
+    },
+    { title: '题型', key: 'type_name', width: 100 },
+    { 
+      title: '难度', 
+      key: 'difficulty_id', 
+      width: 120, 
+      render: (row) => {
+        if (isEditable) {
+           return h(NSelect, {
+             value: row.difficulty_id,
+             options: difficultyOptions.value,
+             placeholder: '请选择难度',
+             size: 'small',
+             onUpdateValue: (v, opt) => {
+               row.difficulty_id = v
+               row.difficulty_name = opt ? opt.label : ''
+               handleRowChange(row)
+             }
+           })
+        }
+        return h('span', {}, row.difficulty_name || '未设置')
+      }
+    },
+    { title: '题目内容', key: 'question_content', ellipsis: { tooltip: true }, render: row => h('div', { style: 'cursor: pointer', onClick: () => openDetail(row) }, row.question_content?.substring(0, 60)) },
+    { title: '状态', key: 'review_status', width: 100, render: row => {
+      if (row.review_status === 0) return h(NTag, { type: 'warning' }, { default: () => '待校验' })
+      if (row.review_status === 1) return h(NTag, { type: 'success' }, { default: () => '已通过' })
+      return h(NTag, { type: 'error' }, { default: () => '已拒绝' })
+    }}
+  ]
+})
+
+const checkUnsaved = (e) => {
+  const hasIncomplete = activeTab.value === 'file' && generated.items.some(item => !item.chapter_id || !item.difficulty_id)
+  if (hasUnsavedChanges.value || (hasIncomplete && generated.items.length > 0)) {
+    e.preventDefault()
+    e.returnValue = ''
+  }
+}
+
+onMounted(() => { window.addEventListener('beforeunload', checkUnsaved) })
+onUnmounted(() => { window.removeEventListener('beforeunload', checkUnsaved) })
+
+onBeforeRouteLeave((to, from, next) => {
+  const hasIncomplete = activeTab.value === 'file' && generated.items.some(item => !item.chapter_id || !item.difficulty_id)
+  if (hasUnsavedChanges.value || (hasIncomplete && generated.items.length > 0)) {
+    dialogApi.warning({
+      title: '提示',
+      content: '当前有未保存的修改或未设置章节/难度的题目，确定要离开吗？',
+      positiveText: '离开',
+      negativeText: '取消',
+      onPositiveClick: () => { next() },
+      onNegativeClick: () => { next(false) }
+    })
+  } else {
+    next()
+  }
+})
 </script>
 
 <template>
@@ -765,7 +846,7 @@ const resultTableColumns = [
           </div>
         </div>
       </template>
-      <n-data-table :columns="resultTableColumns" :data="generated.items" :loading="generated.loading" :max-height="400" />
+      <n-data-table :columns="resultTableColumns" :data="generated.items" :loading="generated.loading" :pagination="resultPagination" />
     </n-card>
 
     <n-modal v-model:show="detailDialog.visible" preset="card" title="题目详情" style="width: 600px">
