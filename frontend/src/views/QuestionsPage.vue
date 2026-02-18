@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref, h, computed } from 'vue'
 import { useMessage, useDialog, NButton, NTag, NIcon, NSelect, NCascader } from 'naive-ui'
-import { SearchOutline, AddOutline, CreateOutline, TrashOutline, CloudUploadOutline, DownloadOutline, PlayOutline, CloseOutline, FunnelOutline, ExpandOutline } from '@vicons/ionicons5'
+import { SearchOutline, AddOutline, CreateOutline, TrashOutline, CloudUploadOutline, DownloadOutline, PlayOutline, CloseOutline, FunnelOutline, ExpandOutline, CaretDownOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getToken, getUser } from '../auth'
 
@@ -792,7 +792,7 @@ function handlePageSizeChange(pageSize) {
         <div class="filter-section-header filter-section-toggle" @click="filterCollapsed = !filterCollapsed">
           <n-icon size="16" color="#64748b"><FunnelOutline /></n-icon>
           <span>条件筛选</span>
-          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><ExpandOutline /></n-icon>
+          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><CaretDownOutline /></n-icon>
         </div>
         <template v-if="!filterCollapsed">
           <div class="filter-row">
@@ -1244,6 +1244,7 @@ function handlePageSizeChange(pageSize) {
   padding-bottom: 8px;
   margin-bottom: 4px;
   border-bottom: 1px solid rgba(100, 116, 139, 0.15);
+  line-height: 1;
 }
 
 .filter-section-toggle {
@@ -1251,6 +1252,8 @@ function handlePageSizeChange(pageSize) {
   user-select: none;
   display: flex;
   align-items: center;
+  min-height: 32px;
+  padding: 6px 8px;
 }
 .filter-section-toggle:hover {
   background: rgba(100,116,139,0.06);

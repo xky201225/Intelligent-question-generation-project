@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch, nextTick } from 'vue'
 import { useMessage, useDialog, NButton } from 'naive-ui'
-import { AddOutline, RefreshOutline, CreateOutline, TrashOutline, CheckmarkOutline, EyeOutline, DownloadOutline, SparklesOutline, FunnelOutline, ExpandOutline } from '@vicons/ionicons5'
+import { AddOutline, RefreshOutline, CreateOutline, TrashOutline, CheckmarkOutline, EyeOutline, DownloadOutline, SparklesOutline, FunnelOutline, ExpandOutline, CaretDownOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import StylePreview from '../components/StylePreview.vue'
 import { marked } from 'marked'
@@ -343,7 +343,7 @@ import { h } from 'vue'
               <div class="filter-section-header filter-section-toggle" @click="filterCollapsed = !filterCollapsed">
                 <n-icon size="16" color="#64748b"><FunnelOutline /></n-icon>
                 <span>条件筛选</span>
-                <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><ExpandOutline /></n-icon>
+                <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><CaretDownOutline /></n-icon>
               </div>
               <template v-if="!filterCollapsed">
                 <div class="filter-row">
@@ -531,6 +531,9 @@ import { h } from 'vue'
   user-select: none;
   display: flex;
   align-items: center;
+  min-height: 32px;
+  padding: 6px 8px;
+  line-height: 1;
 }
 
 .filter-section-header:hover {

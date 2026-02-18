@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch, h } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMessage, useDialog, NButton, NTag, NIcon } from 'naive-ui'
-import { RefreshOutline, TrashOutline, DownloadOutline, CheckmarkOutline, ExpandOutline, EyeOutline, ReorderFourOutline, SearchOutline, FunnelOutline } from '@vicons/ionicons5'
+import { RefreshOutline, TrashOutline, DownloadOutline, CheckmarkOutline, ExpandOutline, EyeOutline, ReorderFourOutline, SearchOutline, FunnelOutline, CaretDownOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getUser } from '../auth'
 import ExportPreview from '../components/ExportPreview.vue'
@@ -352,7 +352,7 @@ const tableColumns = [
         <div class="filter-section-header filter-section-toggle" @click="filterCollapsed = !filterCollapsed">
           <n-icon size="16" color="#64748b"><FunnelOutline /></n-icon>
           <span>条件筛选</span>
-          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><ExpandOutline /></n-icon>
+          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><CaretDownOutline /></n-icon>
         </div>
         <template v-if="!filterCollapsed">
           <!-- 筛选区域：标签式布局 -->
@@ -688,6 +688,7 @@ const tableColumns = [
   display: flex;
   align-items: center;
   gap: 8px;
+  line-height: 1;
 }
 
 .filter-section-toggle {
@@ -695,6 +696,8 @@ const tableColumns = [
   user-select: none;
   display: flex;
   align-items: center;
+  min-height: 32px;
+  padding: 6px 8px;
 }
 
 .filter-section-toggle:hover {

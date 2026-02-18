@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch, h } from 'vue'
 import { useMessage, useDialog } from 'naive-ui'
-import { RefreshOutline, AddOutline, SettingsOutline, CreateOutline, TrashOutline, CloudUploadOutline, SparklesOutline, CheckmarkOutline, CloseOutline, DownloadOutline, FunnelOutline } from '@vicons/ionicons5'
+import { RefreshOutline, AddOutline, SettingsOutline, CreateOutline, TrashOutline, CloudUploadOutline, SparklesOutline, CheckmarkOutline, CloseOutline, DownloadOutline, FunnelOutline, CaretDownOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 
 const message = useMessage()
@@ -418,7 +418,7 @@ const filterCollapsed = ref(true)
         <div class="filter-section-header filter-section-toggle" @click="filterCollapsed = !filterCollapsed">
           <n-icon size="16" color="#64748b"><FunnelOutline /></n-icon>
           <span>筛选条件</span>
-          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><ExpandOutline /></n-icon>
+          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><CaretDownOutline /></n-icon>
         </div>
         <template v-if="!filterCollapsed">
           <div class="filter-row">
@@ -713,6 +713,7 @@ const filterCollapsed = ref(true)
   padding-bottom: 8px;
   margin-bottom: 4px;
   border-bottom: 1px solid rgba(100, 116, 139, 0.15);
+  line-height: 1;
 }
 
 .filter-section-toggle {
@@ -720,6 +721,8 @@ const filterCollapsed = ref(true)
   user-select: none;
   display: flex;
   align-items: center;
+  min-height: 32px;
+  padding: 6px 8px;
 }
 
 .filter-section-toggle:hover {

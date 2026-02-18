@@ -655,12 +655,10 @@ onBeforeRouteLeave((to, from, next) => {
       </template>
       <n-alert v-if="error" type="error" :title="error" style="margin-bottom: 12px" />
       <div class="filter-section">
-        <div class="filter-section-header filter-section-toggle" @click="filterCollapsed = !filterCollapsed">
+        <div class="filter-section-header">
           <n-icon size="16" color="#64748b"><FunnelOutline /></n-icon>
           <span>条件筛选</span>
-          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><ExpandOutline /></n-icon>
         </div>
-        <template v-if="!filterCollapsed">
           <div class="filter-row">
             <div class="filter-label">科目</div>
             <div class="filter-content filter-tags">
@@ -748,7 +746,6 @@ onBeforeRouteLeave((to, from, next) => {
               </div>
             </div>
           </div>
-        </template>
       </div>
 
 
@@ -939,6 +936,7 @@ onBeforeRouteLeave((to, from, next) => {
   padding-bottom: 8px;
   margin-bottom: 4px;
   border-bottom: 1px solid rgba(100, 116, 139, 0.15);
+  line-height: 1;
 }
 
 .filter-section-toggle {
@@ -946,6 +944,8 @@ onBeforeRouteLeave((to, from, next) => {
   user-select: none;
   display: flex;
   align-items: center;
+  min-height: 32px;
+  padding: 6px 8px;
 }
 
 .filter-section-toggle:hover {

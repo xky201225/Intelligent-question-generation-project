@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch, nextTick, h } from 'vue'
 import { useMessage, useDialog, NButton, NTag } from 'naive-ui'
-import { SearchOutline, AddOutline, RefreshOutline, TrashOutline, CheckmarkOutline, ExpandOutline, PlayOutline, CloseOutline, FunnelOutline } from '@vicons/ionicons5'
+import { SearchOutline, AddOutline, RefreshOutline, TrashOutline, CheckmarkOutline, ExpandOutline, PlayOutline, CloseOutline, FunnelOutline, CaretDownOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getToken, getUser } from '../auth'
 
@@ -33,6 +33,7 @@ const filters = reactive({
 
 const available = reactive({ items: [], total: 0 })
 const checkedRowKeys = ref([])
+const filterCollapsed = ref(true)
 
 const paper = reactive({
   paper_name: '未命名试卷',
@@ -72,6 +73,10 @@ function typeName(type_id) {
 function difficultyName(difficulty_id) {
   const d = difficulties.value.find(x => x.difficulty_id === difficulty_id)
   return d ? d.difficulty_name : String(difficulty_id ?? '')
+}
+
+function toggleFilter() {
+  filterCollapsed.value = !filterCollapsed.value
 }
 
 async function loadDicts() {
@@ -538,10 +543,10 @@ function handlePageSizeChange(pageSize) { filters.page_size = pageSize; filters.
         </div>
       </template>
       <div class="filter-section">
-        <div class="filter-section-header filter-section-toggle" @click="filterCollapsed = !filterCollapsed">
+        <div class="filter-section-header filter-section-toggle" @click="toggleFilter">
           <n-icon size="16" color="#64748b"><FunnelOutline /></n-icon>
           <span>条件筛选</span>
-          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><ExpandOutline /></n-icon>
+          <n-icon size="16" style="margin-left: 4px;transition:transform 0.2s;" :style="{transform: filterCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}"><CaretDownOutline /></n-icon>
         </div>
         <template v-if="!filterCollapsed">
           <!-- 第一行：基础筛选 -->
@@ -846,6 +851,7 @@ function handlePageSizeChange(pageSize) { filters.page_size = pageSize; filters.
   padding-bottom: 8px;
   margin-bottom: 4px;
   border-bottom: 1px solid rgba(100, 116, 139, 0.15);
+  line-height: 1;
 }
 
 .filter-section-toggle {
@@ -853,6 +859,8 @@ function handlePageSizeChange(pageSize) { filters.page_size = pageSize; filters.
   user-select: none;
   display: flex;
   align-items: center;
+  min-height: 32px;
+  padding: 6px 8px;
 }
 
 .filter-section-toggle:hover {
