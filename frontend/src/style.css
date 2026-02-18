@@ -45,6 +45,14 @@ body {
 :root[data-theme="light"] {
   color: #333;
   background-color: #fff;
+  --stat-card-bg: linear-gradient(135deg, #fff 60%, #f6f7fa 100%);
+  --stat-card-border: 1.5px solid #e0e3e8;
+  --table-border: rgba(148, 163, 184, 0.35);
+  --table-header-bg: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.9));
+  --table-header-text: #334155;
+  --table-cell-border: rgba(226, 232, 240, 0.9);
+  --table-row-even: rgba(248, 250, 252, 0.7);
+  --table-row-hover: rgba(226, 232, 240, 0.6);
 }
 
 /* 深色模式 */
@@ -52,4 +60,35 @@ body {
 :root[data-theme="dark"] body {
   background-color: #18181c;
   color: rgba(255, 255, 255, 0.87);
+  --stat-card-bg: linear-gradient(135deg, #232326 60%, #2a2a2e 100%);
+  --stat-card-border: 1.5px solid #44454a;
+  --table-border: rgba(71, 85, 105, 0.6);
+  --table-header-bg: linear-gradient(180deg, rgba(30, 34, 42, 0.98), rgba(24, 27, 34, 0.95));
+  --table-header-text: rgba(226, 232, 240, 0.92);
+  --table-cell-border: rgba(51, 65, 85, 0.65);
+  --table-row-even: rgba(30, 34, 42, 0.72);
+  --table-row-hover: rgba(51, 65, 85, 0.5);
+}
+
+/* 深色模式下表格统一覆盖，防止页面级浅色样式污染 */
+:root[data-theme="dark"] .n-data-table {
+  border-color: var(--table-border) !important;
+}
+
+:root[data-theme="dark"] .n-data-table .n-data-table-th {
+  background: var(--table-header-bg) !important;
+  color: var(--table-header-text) !important;
+}
+
+:root[data-theme="dark"] .n-data-table .n-data-table-td,
+:root[data-theme="dark"] .n-data-table .n-data-table-th {
+  border-bottom: 1px solid var(--table-cell-border) !important;
+}
+
+:root[data-theme="dark"] .n-data-table .n-data-table-tr:nth-child(even) .n-data-table-td {
+  background: var(--table-row-even) !important;
+}
+
+:root[data-theme="dark"] .n-data-table .n-data-table-tr:hover .n-data-table-td {
+  background: var(--table-row-hover) !important;
 }

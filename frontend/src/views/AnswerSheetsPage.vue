@@ -504,6 +504,10 @@ import { h } from 'vue'
   font-size: 13px;
 }
 
+:deep(.n-button) {
+  border-radius: 14px;
+}
+
 .ai-preview {
   padding: 20px;
   border: 1px solid var(--n-border-color);

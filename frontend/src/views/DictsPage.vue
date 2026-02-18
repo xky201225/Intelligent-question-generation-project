@@ -312,21 +312,19 @@ const difficultyColumns = [
 /* 卡片圆角和极浅灰色背景 */
 .n-card {
   border-radius: 20px !important;
-  background: linear-gradient(135deg, #fafbfc 60%, #fff 100%) !important;
   box-shadow: none;
-  border: 1px solid #f0f1f3;
 }
 
 /* 统计卡片也用圆角和分割色 */
 .stat-card {
-    background: linear-gradient(135deg, #fff 60%, #f6f7fa 100%);
+    background: var(--stat-card-bg);
     border-radius: 20px;
     padding: 20px;
     display: flex;
     align-items: center;
     gap: 15px;
     transition: transform 0.2s;
-    border: 1.5px solid #e0e3e8; /* 更明显的边缘 */
+    border: var(--stat-card-border); /* 更明显的边缘 */
     box-shadow: 0 2px 8px rgba(0,0,0,0.04); /* 轻微阴影提升立体感 */
 }
 
@@ -405,9 +403,16 @@ const difficultyColumns = [
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
 }
 
-:global(html[data-theme="dark"]) .stat-card {
-    background: linear-gradient(135deg, #232326 60%, #2a2a2e 100%);
-    border: 1.5px solid #44454a; /* 暗色模式下更深的边缘 */
+:global(html[data-theme="dark"]) :deep(.stat-card) {
     box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+}
+:global(html[data-theme="light"]) :deep(.n-card) {
+  background: linear-gradient(135deg, #fafbfc 60%, #fff 100%) !important;
+  border: 1px solid #f0f1f3;
+}
+
+:global(html[data-theme="dark"]) :deep(.n-card) {
+  background: linear-gradient(135deg, #1f2024 60%, #24262b 100%) !important;
+  border: 1px solid #2f3136;
 }
 </style>

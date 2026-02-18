@@ -382,4 +382,7 @@ onUnmounted(() => {
 .api-item.unknown {
   color: var(--n-text-color-3);
 }
+:deep(.n-button) {
+  border-radius: 14px;
+}
 </style>
