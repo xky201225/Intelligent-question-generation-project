@@ -496,7 +496,11 @@ function removeDifficultyRule(tid, index) {
   const cfg = gen.configs[tid]
   if (!cfg || !Array.isArray(cfg.rules)) return
   cfg.rules.splice(index, 1)
-  if (cfg.rules.length === 0) cfg.rules.push({ difficulty_id: null, count: 5 })
+  if (cfg.rules.length === 0) {
+    delete gen.configs[tid]
+    const pos = gen.type_ids.indexOf(tid)
+    if (pos >= 0) gen.type_ids.splice(pos, 1)
+  }
 }
 
 function getChapterName(cid) {
@@ -541,6 +545,12 @@ onUnmounted(() => {
 const subjectOptions = computed(() => subjects.value.map(s => ({ label: s.subject_name, value: s.subject_id })))
 const textbookOptions = computed(() => textbooks.value.map(t => ({ label: t.textbook_name + (t.author ? '-' + t.author : ''), value: t.textbook_id })))
 const typeOptions = computed(() => types.value.map(t => ({ label: t.type_name, value: t.type_id })))
+const orderedTypeIds = computed(() => {
+  const selected = new Set(gen.type_ids || [])
+  return types.value
+    .map(t => t.type_id)
+    .filter(id => selected.has(id))
+})
 const difficultyOptions = computed(() => difficulties.value.map(d => ({ label: d.difficulty_name, value: d.difficulty_id })))
 const paperOptions = computed(() => papers.value.map(p => ({ label: p.paper_name, value: p.paper_id })))
 const reviewerOptions = computed(() => reviewers.value.map(r => ({ label: r, value: r })))
@@ -769,7 +779,7 @@ onBeforeRouteLeave((to, from, next) => {
           </div>
           <div v-if="gen.type_ids.length > 0" class="config-list">
             <div class="config-header">题型规则配置</div>
-            <div v-for="tid in gen.type_ids" :key="tid" class="config-item">
+            <div v-for="tid in orderedTypeIds" :key="tid" class="config-item">
               <div class="type-name">{{ getTypeName(tid) }}</div>
               <div class="rules">
                 <div v-for="(r, idx) in gen.configs[tid]?.rules" :key="idx" class="rule-row">
@@ -786,7 +796,7 @@ onBeforeRouteLeave((to, from, next) => {
                   </div>
                   <n-input-number v-model:value="r.count" :min="1" :max="50" style="width: 100px" placeholder="数量" />
                   <span class="count-unit">题</span>
-                  <n-button text type="error" @click="removeDifficultyRule(tid, idx)">删除</n-button>
+                  <n-button size="small" type="error" @click="removeDifficultyRule(tid, idx)">删除</n-button>
                 </div>
                 <n-button size="small" @click="addDifficultyRule(tid)"><template #icon><n-icon><AddOutline /></n-icon></template>添加难度</n-button>
               </div>
@@ -868,7 +878,10 @@ onBeforeRouteLeave((to, from, next) => {
       <div class="streamProgress">
         <div class="progress-info">
           <span class="stage-text">{{ stream.currentStage }}</span>
-          <span class="count-text">已生成 {{ stream.generatedCount }} / {{ stream.totalCount }}</span>
+          <span class="count-text">
+            已生成 {{ stream.generatedCount }} / {{ stream.totalCount }}
+            <span class="progress-percent">({{ stream.progress }}%)</span>
+          </span>
         </div>
         <n-progress :percentage="stream.progress" :height="8" :show-indicator="false" />
       </div>
@@ -1193,6 +1206,7 @@ onBeforeRouteLeave((to, from, next) => {
 .progress-info { display: flex; justify-content: space-between; font-size: 13px; }
 .stage-text { font-weight: 500; color: var(--n-primary-color); }
 .count-text { color: var(--n-text-color-3); }
+.progress-percent { margin-left: 6px; color: var(--n-primary-color); font-weight: 600; }
 .streamBody { padding: 10px 12px; overflow: auto; flex: 1; }
 .streamLines { font-family: monospace; font-size: 12px; white-space: pre-wrap; margin-bottom: 12px; }
 .streamHint { color: var(--n-text-color-3); font-size: 12px; }
