@@ -25,8 +25,8 @@ const filter = reactive({
   subject_id: null,
   textbook_id: null,
   chapter_id: [],
-  type_id: null,
-  difficulty_id: null,
+  type_id: [],
+  difficulty_id: [],
   review_status: 1,
   page: 1,
   page_size: 20,
@@ -177,9 +177,31 @@ function toggleSubChapter(chapterId) {
   search()
 }
 
+// 切换题型选择
+function toggleTypeId(typeId) {
+  const idx = filter.type_id.indexOf(typeId)
+  if (idx >= 0) {
+    filter.type_id.splice(idx, 1)
+  } else {
+    filter.type_id.push(typeId)
+  }
+  search()
+}
+
+// 切换难度选择
+function toggleDifficultyId(difficultyId) {
+  const idx = filter.difficulty_id.indexOf(difficultyId)
+  if (idx >= 0) {
+    filter.difficulty_id.splice(idx, 1)
+  } else {
+    filter.difficulty_id.push(difficultyId)
+  }
+  search()
+}
+
 // 获取难度对应的颜色类名
 function getDifficultyClass(difficultyId, difficultyName) {
-  const selected = filter.difficulty_id === difficultyId
+  const selected = filter.difficulty_id.includes(difficultyId)
   const name = difficultyName?.toLowerCase() || ''
   if (name.includes('简单') || name.includes('easy')) {
     return selected ? 'difficulty-easy-selected' : 'difficulty-easy'
@@ -201,8 +223,8 @@ async function search() {
       q: filter.q || undefined,
       subject_id: filter.subject_id || undefined,
       chapter_id: Array.isArray(filter.chapter_id) && filter.chapter_id.length > 0 ? filter.chapter_id.join(',') : undefined,
-      type_id: filter.type_id || undefined,
-      difficulty_id: filter.difficulty_id || undefined,
+      type_id: Array.isArray(filter.type_id) && filter.type_id.length > 0 ? filter.type_id.join(',') : undefined,
+      difficulty_id: Array.isArray(filter.difficulty_id) && filter.difficulty_id.length > 0 ? filter.difficulty_id.join(',') : undefined,
       review_status: filter.review_status === null ? undefined : filter.review_status,
     }
     const resp = await http.get('/questions', { params })
@@ -301,16 +323,41 @@ async function openEdit(row) {
 async function approve() {
   try {
     const user = getUser()
+
+    // 1. Save (Update) first
+    if (
+      !questionDialog.form.subject_id ||
+      !questionDialog.form.chapter_id ||
+      !questionDialog.form.type_id ||
+      !questionDialog.form.difficulty_id ||
+      !questionDialog.form.question_content
+    ) {
+      message.error('科目/章节/题型/难度/题干必填')
+      return
+    }
+
+    await http.put(`/questions/${questionDialog.form.question_id}`, {
+      subject_id: questionDialog.form.subject_id,
+      chapter_id: questionDialog.form.chapter_id,
+      type_id: questionDialog.form.type_id,
+      difficulty_id: questionDialog.form.difficulty_id,
+      question_content: questionDialog.form.question_content,
+      question_answer: questionDialog.form.question_answer,
+      question_analysis: questionDialog.form.question_analysis,
+      question_score: questionDialog.form.question_score,
+    })
+
+    // 2. Approve
     await http.post('/ai/verify', {
       question_id: questionDialog.form.question_id,
       action: 'approve',
       reviewer: user ? user.name : 'manual'
     })
-    message.success('已审核通过')
+    message.success('已保存并审核通过')
     questionDialog.visible = false
     await search()
   } catch (e) {
-    message.error(e?.message || '审核失败')
+    message.error(e?.message || '操作失败')
   }
 }
 
@@ -690,7 +737,6 @@ const aiDialogTextbookOptions = computed(() => aiDialogTextbooks.value.map(t => 
 const reviewStatusOptions = [
   { label: '已通过', value: 1 },
   { label: '待审核', value: 0 },
-  { label: '已拒绝', value: 2 }
 ]
 
 // Chapter tree to cascader options
@@ -896,8 +942,8 @@ function handlePageSizeChange(pageSize) {
                 v-for="t in types"
                 :key="t.type_id"
                 :bordered="false"
-                :class="['filter-tag', filter.type_id === t.type_id ? 'tag-selected' : '']"
-                @click="() => { filter.type_id = filter.type_id === t.type_id ? null : t.type_id; search() }"
+                :class="['filter-tag', filter.type_id.includes(t.type_id) ? 'tag-selected' : '']"
+                @click="toggleTypeId(t.type_id)"
               >
                 {{ t.type_name }}
               </n-tag>
@@ -912,7 +958,7 @@ function handlePageSizeChange(pageSize) {
                 :key="d.difficulty_id"
                 :bordered="false"
                 :class="['filter-tag', 'difficulty-tag', getDifficultyClass(d.difficulty_id, d.difficulty_name)]"
-                @click="() => { filter.difficulty_id = filter.difficulty_id === d.difficulty_id ? null : d.difficulty_id; search() }"
+                @click="toggleDifficultyId(d.difficulty_id)"
               >
                 {{ d.difficulty_name }}
               </n-tag>
@@ -1089,9 +1135,9 @@ function handlePageSizeChange(pageSize) {
             { title: '答案', key: 'question_answer', width: 150 },
             { title: '解析', key: 'question_analysis', width: 200 },
             { title: '分值', key: 'question_score', width: 80 },
-            { title: '题型', key: 'type_id', width: 130, render: (row) => h(NSelect, { value: row.type_id, options: typeOptions.value, size: 'small', onUpdateValue: (v) => row.type_id = v }) },
-            { title: '难度', key: 'difficulty_id', width: 110, render: (row) => h(NSelect, { value: row.difficulty_id, options: difficultyOptions.value, size: 'small', onUpdateValue: (v) => row.difficulty_id = v }) },
-            { title: '章节', key: 'chapter_id', width: 200, render: (row) => h(NCascader, { value: row.chapter_id, options: aiReviewChapterCascaderOptions.value, checkStrategy: 'child', size: 'small', onUpdateValue: (v) => row.chapter_id = v }) }
+            { title: '题型', key: 'type_id', width: 130, render: (row) => h(NSelect, { value: row.type_id, options: typeOptions, size: 'small', status: (row._error && !row.type_id) ? 'error' : undefined, onUpdateValue: (v) => row.type_id = v }) },
+            { title: '难度', key: 'difficulty_id', width: 110, render: (row) => h(NSelect, { value: row.difficulty_id, options: difficultyOptions, size: 'small', status: (row._error && !row.difficulty_id) ? 'error' : undefined, onUpdateValue: (v) => row.difficulty_id = v }) },
+            { title: '章节', key: 'chapter_id', width: 200, render: (row) => h(NCascader, { value: row.chapter_id, options: aiReviewChapterCascaderOptions, checkStrategy: 'child', size: 'small', status: (row._error && !row.chapter_id) ? 'error' : undefined, onUpdateValue: (v) => row.chapter_id = v }) }
           ]"
           :data="aiReviewDialog.items"
           :max-height="500"

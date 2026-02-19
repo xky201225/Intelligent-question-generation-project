@@ -489,6 +489,10 @@ function addDifficultyRule(tid) {
   const cfg = gen.configs[tid]
   if (!cfg) return
   if (!Array.isArray(cfg.rules)) cfg.rules = []
+  if (cfg.rules.length >= 3) {
+    message.warning('每个题型最多添加 3 条难度规则')
+    return
+  }
   cfg.rules.push({ difficulty_id: null, count: 5 })
 }
 
@@ -777,30 +781,60 @@ onBeforeRouteLeave((to, from, next) => {
               </div>
             </div>
           </div>
-          <div v-if="gen.type_ids.length > 0" class="config-list">
-            <div class="config-header">题型规则配置</div>
-            <div v-for="tid in orderedTypeIds" :key="tid" class="config-item">
-              <div class="type-name">{{ getTypeName(tid) }}</div>
-              <div class="rules">
-                <div v-for="(r, idx) in gen.configs[tid]?.rules" :key="idx" class="rule-row">
-                  <div class="difficulty-tags">
-                    <n-tag
-                      v-for="d in difficulties"
-                      :key="d.difficulty_id"
-                      :bordered="false"
-                      :class="['filter-tag', 'difficulty-tag', getDifficultyClass(d.difficulty_id, d.difficulty_name, r.difficulty_id === d.difficulty_id)]"
-                      @click="r.difficulty_id = d.difficulty_id"
-                    >
-                      {{ d.difficulty_name }}
-                    </n-tag>
+          <div class="config-layout" v-if="activeTab === 'text' && (gen.type_ids.length > 0 || gen.chapter_ids.length > 0)">
+         <div class="config-column" style="flex: 2" v-if="gen.type_ids.length > 0">
+                <div class="config-list">
+                  <div class="config-header">题型规则配置</div>
+                  <div v-for="tid in orderedTypeIds" :key="tid" class="config-item">
+                    <div class="type-name">{{ getTypeName(tid) }}</div>
+                    <div class="rules">
+                      <div v-for="(r, idx) in gen.configs[tid]?.rules" :key="idx" class="rule-row">
+                        <div class="difficulty-tags">
+                          <n-tag
+                            v-for="d in difficulties"
+                            :key="d.difficulty_id"
+                            :bordered="false"
+                            :class="['filter-tag', 'difficulty-tag', getDifficultyClass(d.difficulty_id, d.difficulty_name, r.difficulty_id === d.difficulty_id)]"
+                            @click="() => {
+                              if (r.difficulty_id === d.difficulty_id) return;
+                              if (gen.configs[tid].rules.some(rule => rule !== r && rule.difficulty_id === d.difficulty_id)) {
+                                message.warning('该难度已存在，请勿重复添加');
+                                return;
+                              }
+                              r.difficulty_id = d.difficulty_id;
+                            }"
+                          >
+                            {{ d.difficulty_name }}
+                          </n-tag>
+                        </div>
+                        <n-input-number v-model:value="r.count" :min="1" :max="50" style="width: 100px" placeholder="数量" />
+                        <span class="count-unit">题</span>
+                        <n-button size="small" type="error" @click="removeDifficultyRule(tid, idx)">删除</n-button>
+                      </div>
+                      <n-button size="small" @click="addDifficultyRule(tid)"><template #icon><n-icon><AddOutline /></n-icon></template>添加难度</n-button>
+                    </div>
                   </div>
-                  <n-input-number v-model:value="r.count" :min="1" :max="50" style="width: 100px" placeholder="数量" />
-                  <span class="count-unit">题</span>
-                  <n-button size="small" type="error" @click="removeDifficultyRule(tid, idx)">删除</n-button>
                 </div>
-                <n-button size="small" @click="addDifficultyRule(tid)"><template #icon><n-icon><AddOutline /></n-icon></template>添加难度</n-button>
-              </div>
-            </div>
+             </div>
+             
+             <div class="config-column" style="flex: 1" v-if="gen.chapter_ids.length > 0">
+                <div class="config-list" style="height: 100%">
+                  <div class="config-header">
+                    章节权重设置
+                    <span :style="{ color: totalWeight === 100 ? '#18a058' : '#d03050', fontSize: '14px', fontWeight: 'normal', marginLeft: '10px' }">
+                      (当前总和: {{ totalWeight }}%)
+                    </span>
+                    <n-button size="small" style="margin-left: 8px" @click="distributeChapterWeights">平均分配</n-button>
+                  </div>
+                  <div class="weight-grid">
+                    <div v-for="cid in rootSelectedChapters" :key="cid" class="weight-item">
+                      <span class="weight-label" :title="getChapterName(cid)">{{ getChapterName(cid) }}</span>
+                      <n-input-number v-model:value="gen.chapter_weights[cid]" :min="0" :max="100" style="width: 80px" />
+                      <span class="weight-unit">%</span>
+                    </div>
+                  </div>
+                </div>
+             </div>
           </div>
         </n-tab-pane>
 
@@ -825,7 +859,7 @@ onBeforeRouteLeave((to, from, next) => {
         </n-tab-pane>
       </n-tabs>
 
-      <div v-if="gen.chapter_ids.length > 0 && activeTab === 'text'" class="config-list" style="margin-top: 16px">
+      <div v-if="gen.chapter_ids.length > 0 && activeTab === 'text'" class="config-list" style="margin-top: 16px; display: none;">
         <div class="config-header">
           章节权重设置
           <span :style="{ color: totalWeight === 100 ? '#18a058' : '#d03050', fontSize: '14px', fontWeight: 'normal', marginLeft: '10px' }">
@@ -1154,7 +1188,18 @@ onBeforeRouteLeave((to, from, next) => {
   font-size: 13px;
 }
 
-.config-list { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; background-color: var(--n-color-embedded); padding: 16px; border-radius: 12px; }
+.config-layout {
+  display: flex;
+  gap: 16px;
+  margin-top: 16px;
+  align-items: flex-start;
+}
+
+.config-column {
+  min-width: 0;
+}
+
+.config-list { margin-top: 0; display: flex; flex-direction: column; gap: 10px; background-color: var(--n-color-embedded); padding: 16px; border-radius: 12px; }
 .config-header { font-weight: bold; color: var(--n-primary-color); margin-bottom: 8px; }
 .config-item { display: flex; gap: 12px; }
 .type-name { width: 100px; text-align: right; font-weight: 700; padding-top: 6px; color: var(--n-text-color-1); }

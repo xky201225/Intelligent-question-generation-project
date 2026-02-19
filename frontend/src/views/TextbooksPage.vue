@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch, h } from 'vue'
-import { useMessage, useDialog } from 'naive-ui'
+import { useMessage, useDialog, NButton, NIcon } from 'naive-ui'
 import { RefreshOutline, AddOutline, SettingsOutline, CreateOutline, TrashOutline, CloudUploadOutline, SparklesOutline, CheckmarkOutline, CloseOutline, DownloadOutline, FunnelOutline, CaretDownOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 
@@ -240,7 +240,7 @@ async function submitTextbook() {
 async function removeTextbook(row) {
   dialog.warning({
     title: '提示',
-    content: `确认删除教材：{row.textbook_name}？`,
+    content: `确认删除教材：${row.textbook_name}？`,
     positiveText: '确认',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -330,7 +330,7 @@ async function removeChapter() {
   }
   dialog.warning({
     title: '提示',
-    content: `确认删除章节：{selectedChapter.value.chapter_name}？`,
+    content: `确认删除章节：${selectedChapter.value.chapter_name}？`,
     positiveText: '确认',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -388,9 +388,33 @@ const tableColumns = [
     width: 300,
     render(row) {
       return h('div', { style: { display: 'flex', gap: '8px' } }, [
-        h('n-button', { size: 'small', onClick: () => handleSelectTextbook(row) }, { default: () => '管理章节' }),
-        h('n-button', { size: 'small', onClick: () => openEditTextbook(row) }, { default: () => '编辑' }),
-        h('n-button', { size: 'small', type: 'error', onClick: () => removeTextbook(row) }, { default: () => '删除' })
+        h(NButton, { 
+          size: 'small', 
+          type: 'info', 
+          secondary: true,
+          onClick: () => handleSelectTextbook(row) 
+        }, { 
+          icon: () => h(NIcon, null, { default: () => h(SettingsOutline) }),
+          default: () => '管理章节' 
+        }),
+        h(NButton, { 
+          size: 'small', 
+          type: 'primary',
+          secondary: true, 
+          onClick: () => openEditTextbook(row) 
+        }, { 
+          icon: () => h(NIcon, null, { default: () => h(CreateOutline) }),
+          default: () => '编辑' 
+        }),
+        h(NButton, { 
+          size: 'small', 
+          type: 'error', 
+          secondary: true,
+          onClick: () => removeTextbook(row) 
+        }, { 
+          icon: () => h(NIcon, null, { default: () => h(TrashOutline) }),
+          default: () => '删除' 
+        })
       ])
     }
   }
@@ -788,8 +812,10 @@ const filterCollapsed = ref(true)
 }
 
 .empty-hint {
-  font-size: 12px;
-  color: var(--n-text-color-3);
+  font-size: 13px;
+  color: #94a3b8;
+  font-style: italic;
+  padding: 4px 0;
 }
 </style>
 
