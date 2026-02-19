@@ -931,8 +931,9 @@ def _run_generation_v2(app, job_id: str, subject_id: int, chapter_dist: dict[int
     rules: [{"type_id": 1, "difficulty_id": 1, "count": 10}, ...]
     """
     with app.app_context():
+        total_expected = sum(r["count"] for r in rules)
         _job_update(job_id, {"status": "running", "started_at": datetime.now().isoformat(timespec="seconds")})
-        _job_event(job_id, "job_start", "开始生成（按权重分配）")
+        _job_event(job_id, "job_start", f"开始生成（共{total_expected}题）", {"total_count": total_expected})
         qb = _table("question_bank")
         ch = _table("textbook_chapter")
         session = get_session(current_app)

@@ -314,7 +314,13 @@ async function doExportWord() {
     message.success('导出成功')
   } catch (e) {
     console.error(e)
-    message.error('导出失败: ' + (e?.message || '未知错误'))
+    let msg = e?.message || '未知错误'
+    if (msg === 'Network Error') {
+        msg = '网络错误，请检查后端服务是否正常运行，或 Word 是否被其他程序占用'
+    } else if (e.response && e.response.data && e.response.data.error) {
+        msg = e.response.data.error.message || msg
+    }
+    message.error('导出失败: ' + msg)
   }
 }
 
@@ -344,7 +350,13 @@ async function doExportPdf() {
     message.success('导出成功')
   } catch (e) {
     console.error(e)
-    message.error('导出失败: ' + (e?.message || '未知错误'))
+    let msg = e?.message || '未知错误'
+    if (msg === 'Network Error') {
+        msg = '网络错误，请检查后端服务是否正常运行，或 Word 是否被其他程序占用'
+    } else if (e.response && e.response.data && e.response.data.error) {
+        msg = e.response.data.error.message || msg
+    }
+    message.error('导出失败: ' + msg)
   }
 }
 

@@ -1,14 +1,18 @@
 <script setup>
-import { onMounted, reactive, ref, h, computed } from 'vue'
-import { useMessage, useDialog, NButton, NTag, NIcon, NSelect, NCascader } from 'naive-ui'
+import { onMounted, reactive, ref, h, computed, watch, nextTick } from 'vue'
+import { useMessage, useDialog, NButton, NTag, NIcon, NSelect, NCascader, NProgress } from 'naive-ui'
 import { SearchOutline, AddOutline, CreateOutline, TrashOutline, CloudUploadOutline, DownloadOutline, PlayOutline, CloseOutline, FunnelOutline, ExpandOutline, CaretDownOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getToken, getUser } from '../auth'
+import { useTaskStore } from '../stores/taskStore'
+import { useRoute } from 'vue-router'
 
 const message = useMessage()
 const dialog = useDialog()
 const loading = ref(false)
 const error = ref('')
+const taskStore = useTaskStore()
+const route = useRoute()
 
 const filterCollapsed = ref(true)
 
@@ -494,160 +498,49 @@ async function startParsing() {
     const resp = await http.post('/ai/parse-word', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
-    startStream(resp.data.job_id)
+    taskStore.startTask({
+      jobId: resp.data.job_id,
+      type: 'parsing',
+      sourcePath: route.path,
+      context: {
+        subject_id: aiConfigDialog.form.subject_id,
+        textbook_id: aiConfigDialog.form.textbook_id
+      }
+    })
   } catch (e) {
     message.error(e?.message || '启动解析失败')
   }
 }
 
-// Stream related
-const stream = reactive({
-  visible: false,
-  job_id: null,
-  status: 'idle',
-  lines: [],
-  output: '',
-  progress: 0,
-  generatedCount: 0,
-  totalCount: 0,
-  currentStage: '',
-})
+// Stream related watchers
 const streamBodyRef = ref(null)
-let typingTimer = null
-let pollingTimer = null
-let outputQueue = ''
 
-function pushLine(text) {
-  stream.lines.push(text)
-  if (stream.lines.length > 2000) {
-    stream.lines.splice(0, stream.lines.length - 2000)
+watch(() => taskStore.task.lines.length, () => {
+  if (taskStore.showPanel && streamBodyRef.value) {
+    nextTick(() => {
+      streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight
+    })
   }
-  requestAnimationFrame(() => {
-      if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight
-  })
-}
+})
 
-function stopTyping() {
-  if (typingTimer) {
-    clearInterval(typingTimer)
-    typingTimer = null
+watch(() => taskStore.task.output.length, () => {
+  if (taskStore.showPanel && streamBodyRef.value) {
+    nextTick(() => {
+      streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight
+    })
   }
-  outputQueue = ''
-}
+})
 
-function enqueueOutput(text) {
-  if (!text) return
-  outputQueue += text
-  if (!typingTimer) {
-    typingTimer = setInterval(() => {
-      if (!outputQueue) {
-        clearInterval(typingTimer)
-        typingTimer = null
-        return
-      }
-      const backlog = outputQueue.length
-      const step = Math.min(60, Math.max(1, Math.floor(backlog / 120)))
-      const chunk = outputQueue.slice(0, step)
-      outputQueue = outputQueue.slice(step)
-
-      stream.output += chunk
-      if (stream.output.length > 200000) {
-        stream.output = stream.output.slice(stream.output.length - 200000)
-      }
-      
-      if (stream.totalCount > 0) {
-        const matches = stream.output.match(/"question_analysis"/g)
-        const count = matches ? matches.length : 0
-        stream.generatedCount = Math.max(stream.generatedCount, count)
-        stream.progress = Math.min(100, Math.floor((stream.generatedCount / stream.totalCount) * 100))
-      }
-
-      requestAnimationFrame(() => {
-          if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight
-      })
-    }, 16)
-  }
-}
-
-function stopStream() {
-  if (pollingTimer) {
-    clearInterval(pollingTimer)
-    pollingTimer = null
-  }
-  stopTyping()
-}
-
-function startStream(jobId) {
-  stopStream()
-  stream.visible = true
-  stream.job_id = jobId
-  stream.status = 'running'
-  stream.lines = []
-  stream.output = ''
-  stream.progress = 0
-  stream.generatedCount = 0
-  stream.totalCount = 0
-  stream.currentStage = '准备中...'
-  
-  outputQueue = ''
-  pushLine(`任务已创建：${jobId}`)
-
-  let lastEventId = 0
-  
-  pollingTimer = setInterval(async () => {
-    try {
-      const resp = await http.get(`/ai/jobs/${jobId}`)
-      const job = resp.data.job
-      if (!job) return
-      
-      const events = job.events || []
-      const newEvents = events.filter(e => (e.id || 0) > lastEventId)
-      newEvents.sort((a, b) => (a.id || 0) - (b.id || 0))
-      
-      for (const ev of newEvents) {
-        lastEventId = ev.id || lastEventId
-        if (ev.type === 'ai_delta') {
-          const t = ev?.data?.text || ''
-          stream.currentStage = '正在解析...'
-          enqueueOutput(t)
-        } else {
-          const ts = ev.ts ? `【${ev.ts}】` : ''
-          const msg = ev.message ? ` ${ev.message}` : ''
-          pushLine(`${ts}${ev.type}${msg}`)
-          
-          if (ev.type === 'job_start') {
-             if (ev.data && ev.data.total_count) {
-                 stream.totalCount = ev.data.total_count
-             }
-          } else if (ev.type === 'job_done') {
-            stream.status = 'done'
-            stream.currentStage = '解析完成'
-            stream.progress = 100
-            stopStream()
-            
-            const items = job.items || []
-            if (items.length === 0) {
-                 message.warning('未能解析出题目')
-            } else {
-                 openReviewDialog(items)
-            }
-            setTimeout(() => { stream.visible = false }, 1000)
-          } else if (ev.type === 'job_error') {
-            stream.status = 'error'
-            stream.currentStage = '解析出错'
-            stopStream()
-          } else if (ev.type === 'progress') {
-             if (ev.data && ev.data.inserted) {
-                 stream.generatedCount = ev.data.inserted
-             }
-          }
+watch(() => taskStore.task.status, (newStatus) => {
+  if (newStatus === 'done') {
+      if (taskStore.task.items.length === 0) {
+           message.warning('未能解析出题目')
+      } else if (taskStore.showPanel && !aiReviewDialog.visible) {
+             setTimeout(() => { taskStore.showPanel = false }, 1000)
+             openReviewDialog(taskStore.task.items)
         }
-      }
-    } catch (e) {
-      console.error(e)
-    }
-  }, 1000)
-}
+  }
+})
 
 // AI Review Logic
 const aiReviewDialog = reactive({
@@ -658,17 +551,21 @@ const aiReviewDialog = reactive({
 const aiReviewChapterTree = ref([])
 
 async function openReviewDialog(items) {
+  const ctx = taskStore.task.context || {}
+  const subjectId = ctx.subject_id || aiConfigDialog.form.subject_id
+  const textbookId = ctx.textbook_id || aiConfigDialog.form.textbook_id
+
   aiReviewDialog.items = items.map(it => ({
       ...it,
-      subject_id: aiConfigDialog.form.subject_id,
+      subject_id: subjectId,
       chapter_id: it.chapter_id || null,
       type_id: it.type_id || null,
       difficulty_id: it.difficulty_id || null,
       _error: false
   }))
   
-  if (aiConfigDialog.form.textbook_id) {
-      const resp = await http.get(`/textbooks/${aiConfigDialog.form.textbook_id}/chapters`)
+  if (textbookId) {
+      const resp = await http.get(`/textbooks/${textbookId}/chapters`)
       aiReviewChapterTree.value = resp.data.tree || []
   }
   
@@ -698,6 +595,7 @@ async function saveParsedQuestions() {
         aiReviewDialog.visible = false
         filter.review_status = 0
         search()
+        taskStore.resetTask()
     } catch (e) {
         message.error(e?.message || '保存失败')
     } finally {
@@ -724,6 +622,11 @@ onMounted(async () => {
   await loadDicts()
   await loadTextbooks()
   await search()
+
+  if (taskStore.task.status === 'done' && taskStore.showPanel && !aiReviewDialog.visible && taskStore.task.items.length > 0) {
+      taskStore.showPanel = false
+      openReviewDialog(taskStore.task.items)
+  }
 })
 
 // Computed options
@@ -1176,41 +1079,41 @@ function handlePageSizeChange(pageSize) {
     </n-modal>
 
     <!-- Stream Panel -->
-    <div v-if="stream.visible" class="streamPanel">
+    <div v-if="taskStore.showPanel && taskStore.task.type === 'parsing'" class="streamPanel">
       <div class="streamHeader">
         <div class="streamTitle">
           <span>AI解析过程</span>
-          <span class="streamMeta">ID: {{ stream.job_id }}（{{ stream.status }}）</span>
+          <span class="streamMeta">ID: {{ taskStore.task.jobId }}（{{ taskStore.task.status }}）</span>
         </div>
         <div class="streamActions">
-          <n-button size="small" @click="stream.output = ''; stream.lines = []">
+          <n-button size="small" @click="taskStore.task.output = ''; taskStore.task.lines = []">
             <template #icon><n-icon><TrashOutline /></n-icon></template>
             清空
           </n-button>
-          <n-button size="small" @click="stream.visible = false">
+          <n-button size="small" @click="taskStore.showPanel = false">
             <template #icon><n-icon><CloseOutline /></n-icon></template>
-            关闭
+            {{ taskStore.task.status === 'running' ? '最小化' : '关闭' }}
           </n-button>
         </div>
       </div>
 
       <div class="streamProgress">
         <div class="progress-info">
-          <span class="stage-text">{{ stream.currentStage }}</span>
-          <span class="count-text">已解析入库 {{ stream.generatedCount }} 题</span>
+          <span class="stage-text">{{ taskStore.task.currentStage }}</span>
+          <span class="count-text">已解析入库 {{ taskStore.task.generatedCount }} 题</span>
         </div>
-        <n-progress :percentage="stream.progress" :height="8" :show-indicator="false" />
+        <n-progress :percentage="taskStore.task.progress" :height="8" :show-indicator="false" />
       </div>
 
       <div ref="streamBodyRef" class="streamBody">
-        <div v-if="stream.lines.length > 0" class="streamLines">
-          <div v-for="(l, i) in stream.lines" :key="i">{{ l }}</div>
+        <div v-if="taskStore.task.lines.length > 0" class="streamLines">
+          <div v-for="(l, i) in taskStore.task.lines" :key="i">{{ l }}</div>
         </div>
         <div v-else class="streamHint">等待事件流…</div>
 
-        <div v-if="stream.output" class="streamOutput">
+        <div v-if="taskStore.task.output" class="streamOutput">
           <div class="streamOutputTitle">模型输出（实时）</div>
-          <pre class="streamOutputPre">{{ stream.output }}</pre>
+          <pre class="streamOutputPre">{{ taskStore.task.output }}</pre>
         </div>
       </div>
     </div>

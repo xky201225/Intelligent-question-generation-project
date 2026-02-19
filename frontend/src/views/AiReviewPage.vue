@@ -1,10 +1,11 @@
 <script setup>
 import { onMounted, onUnmounted, reactive, ref, computed, watch, nextTick, h } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
-import { useMessage, useDialog, NButton, NTag, NSelect, NInputNumber, NCascader } from 'naive-ui'
+import { useMessage, useDialog, NButton, NTag, NSelect, NInputNumber, NCascader, NProgress } from 'naive-ui'
 import { PlayOutline, AddOutline, TrashOutline, CloseOutline, RefreshOutline, CloudUploadOutline, FunnelOutline } from '@vicons/ionicons5'
 import { http } from '../api/http'
 import { getToken, getUser } from '../auth'
+import { useTaskStore } from '../stores/taskStore'
 
 const message = useMessage()
 const dialogApi = useDialog()
@@ -12,6 +13,7 @@ const loading = ref(false)
 const error = ref('')
 const router = useRouter()
 const route = useRoute()
+const taskStore = useTaskStore()
 
 const subjects = ref([])
 const types = ref([])
@@ -29,18 +31,6 @@ const gen = reactive({
   type_ids: [],
   configs: {},
   create_user: 'ai',
-})
-
-const stream = reactive({
-  visible: false,
-  job_id: null,
-  status: 'idle',
-  lines: [],
-  output: '',
-  progress: 0,
-  generatedCount: 0,
-  totalCount: 0,
-  currentStage: '',
 })
 
 const generated = reactive({ items: [], loading: false })
@@ -253,7 +243,14 @@ async function generate() {
       resp = await http.post('/ai/generate-from-file', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
     }
     message.success('已提交生成（后台生成中）')
-    startStream(resp.data.job_id)
+    taskStore.startTask({
+      jobId: resp.data.job_id,
+      type: 'ai_review',
+      sourcePath: route.path,
+      context: {
+          textbook_id: gen.textbook_id
+      }
+    })
   } catch (e) {
     error.value = e?.message || '生成失败'
   } finally {
@@ -279,123 +276,30 @@ async function fetchJobDetails(jobId) {
   } catch {}
 }
 
-function pushLine(text) {
-  stream.lines.push(text)
-  if (stream.lines.length > 2000) stream.lines.splice(0, stream.lines.length - 2000)
-  requestAnimationFrame(() => { if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight })
-}
-
-function stopTyping() {
-  if (typingTimer) { clearInterval(typingTimer); typingTimer = null }
-  outputQueue = ''
-}
-
-function enqueueOutput(text) {
-  if (!text) return
-  outputQueue += text
-  if (!typingTimer) {
-    typingTimer = setInterval(() => {
-      if (!outputQueue) { clearInterval(typingTimer); typingTimer = null; return }
-      const step = Math.min(60, Math.max(1, Math.floor(outputQueue.length / 120)))
-      const chunk = outputQueue.slice(0, step)
-      outputQueue = outputQueue.slice(step)
-      stream.output += chunk
-      if (stream.output.length > 200000) stream.output = stream.output.slice(stream.output.length - 200000)
-      if (stream.totalCount > 0) {
-        const matches = stream.output.match(/"question_analysis"/g)
-        const count = matches ? matches.length : 0
-        stream.generatedCount = Math.max(stream.generatedCount, count)
-        stream.progress = Math.min(100, Math.floor((stream.generatedCount / stream.totalCount) * 100))
-        
-        // Auto scroll to latest question
-        requestAnimationFrame(() => {
-             const streamBody = streamBodyRef.value
-             if (streamBody) {
-                 streamBody.scrollTop = streamBody.scrollHeight
-             }
-        })
-      }
-      requestAnimationFrame(() => { if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight })
-    }, 16)
+watch(() => taskStore.task.lines.length, () => {
+  if (taskStore.showPanel && streamBodyRef.value) {
+    nextTick(() => { if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight })
   }
-}
+})
 
-function stopStream() {
-  if (pollingTimer) { clearInterval(pollingTimer); pollingTimer = null }
-  stopTyping()
-}
-
-function startStream(jobId) {
-  stopStream()
-  stream.visible = true
-  stream.job_id = jobId
-  stream.status = 'running'
-  stream.lines = []
-  stream.output = ''
-  stream.progress = 0
-  stream.generatedCount = 0
-  stream.totalCount = 0
-  stream.currentStage = '准备中...'
-
-  let total = 0
-  if (activeTab.value === 'text') {
-    Object.values(gen.configs).forEach(cfg => (cfg.rules || []).forEach(r => total += (r.count || 0)))
+watch(() => taskStore.task.output.length, () => {
+  if (taskStore.showPanel && streamBodyRef.value) {
+    nextTick(() => { if (streamBodyRef.value) streamBodyRef.value.scrollTop = streamBodyRef.value.scrollHeight })
   }
-  stream.totalCount = total
-  outputQueue = ''
-  pushLine(`任务已创建：${jobId}`)
+})
 
-  let lastEventId = 0
-  pollingTimer = setInterval(async () => {
-    try {
-      const resp = await http.get(`/ai/jobs/${jobId}`)
-      const job = resp.data.job
-      if (!job) return
-      if (stream.totalCount === 0 && job.total_count) stream.totalCount = job.total_count
-      const events = job.events || []
-      const newEvents = events.filter(e => (e.id || 0) > lastEventId)
-      newEvents.sort((a, b) => (a.id || 0) - (b.id || 0))
-      for (const ev of newEvents) {
-        lastEventId = ev.id || lastEventId
-        if (ev.type === 'ai_delta') {
-          stream.currentStage = '正在生成题目...'
-          enqueueOutput(ev?.data?.text || '')
-        } else {
-          const ts = ev.ts ? `【${ev.ts}】` : ''
-          const msg = ev.message ? ` ${ev.message}` : ''
-          pushLine(`${ts}${ev.type}${msg}`)
-          if (ev.type === 'job_start' && ev.data?.total_count) stream.totalCount = ev.data.total_count
-          else if (ev.type === 'job_done') {
-            stream.status = 'done'; stream.currentStage = '生成完成'; stream.progress = 100; stream.generatedCount = stream.totalCount
-            stopStream(); await fetchJobDetails(stream.job_id)
-            setTimeout(() => { stream.visible = false }, 1500)
-            
-            // Scroll to result
-            nextTick(() => {
-                const el = document.getElementById('generated-result-card')
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-            })
-          } else if (ev.type === 'job_error') {
-            stream.status = 'error'; stream.currentStage = '生成出错'; stopStream()
-          }
-        }
-      }
-      if (job.status === 'done' && stream.status !== 'done' && newEvents.length === 0) {
-        stream.status = 'done'; stream.currentStage = '生成完成'; stream.progress = 100
-        stopStream(); await fetchJobDetails(stream.job_id)
-        setTimeout(() => { stream.visible = false }, 1500)
-        
-        // Scroll to result
-        nextTick(() => {
-            const el = document.getElementById('generated-result-card')
-            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        })
-      } else if (job.status === 'error' && stream.status !== 'error' && newEvents.length === 0) {
-        stream.status = 'error'; stream.currentStage = '生成出错'; stopStream()
-      }
-    } catch {}
-  }, 1000)
-}
+watch(() => taskStore.task.status, (newStatus) => {
+  if (newStatus === 'done' && taskStore.task.type === 'ai_review') {
+      setTimeout(() => { taskStore.showPanel = false }, 1000)
+      fetchJobDetails(taskStore.task.jobId)
+      nextTick(() => {
+          const el = document.getElementById('generated-result-card')
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+  } else if (newStatus === 'error') {
+      message.error(taskStore.task.error || '生成失败')
+  }
+})
 
 // 计算当前可见的小章节（按大章节分组）
 const visibleSubChapterGroups = computed(() => {
@@ -538,11 +442,20 @@ onMounted(async () => {
   await loadDicts()
   await loadTextbooks()
   await loadReviewers()
+  window.addEventListener('beforeunload', checkUnsaved)
+  
+if (taskStore.task.status === 'done' && taskStore.task.type === 'ai_review' && taskStore.showPanel) {
+      taskStore.showPanel = false
+      if (activeTab.value === 'file' && taskStore.task.context && taskStore.task.context.textbook_id) {
+          gen.textbook_id = taskStore.task.context.textbook_id
+          await loadChapters()
+      }
+      fetchJobDetails(taskStore.task.jobId)
+  }
 })
 
 onUnmounted(() => {
-  stopStream()
-  if (pollingTimer) { clearInterval(pollingTimer); pollingTimer = null }
+  window.removeEventListener('beforeunload', checkUnsaved)
 })
 
 // Computed options
@@ -635,8 +548,7 @@ const checkUnsaved = (e) => {
   }
 }
 
-onMounted(() => { window.addEventListener('beforeunload', checkUnsaved) })
-onUnmounted(() => { window.removeEventListener('beforeunload', checkUnsaved) })
+
 
 onBeforeRouteLeave((to, from, next) => {
   const hasIncomplete = activeTab.value === 'file' && generated.items.some(item => !item.chapter_id || !item.difficulty_id)
@@ -901,28 +813,28 @@ onBeforeRouteLeave((to, from, next) => {
       <template #footer><n-button @click="detailDialog.visible = false">关闭</n-button></template>
     </n-modal>
 
-    <div v-if="stream.visible" class="streamPanel">
+    <div v-if="taskStore.showPanel && taskStore.task.type === 'ai_review'" class="streamPanel">
       <div class="streamHeader">
-        <div class="streamTitle"><span>生成过程</span><span class="streamMeta">ID: {{ stream.job_id }}（{{ stream.status }}）</span></div>
+        <div class="streamTitle"><span>生成过程</span><span class="streamMeta">ID: {{ taskStore.task.jobId }}（{{ taskStore.task.status }}）</span></div>
         <div class="streamActions">
-          <n-button size="small" @click="stream.output = ''; stream.lines = []"><template #icon><n-icon><TrashOutline /></n-icon></template>清空</n-button>
-          <n-button size="small" @click="stream.visible = false"><template #icon><n-icon><CloseOutline /></n-icon></template>关闭</n-button>
+          <n-button size="small" @click="taskStore.task.output = ''; taskStore.task.lines = []"><template #icon><n-icon><TrashOutline /></n-icon></template>清空</n-button>
+          <n-button size="small" @click="taskStore.showPanel = false"><template #icon><n-icon><CloseOutline /></n-icon></template>关闭</n-button>
         </div>
       </div>
       <div class="streamProgress">
         <div class="progress-info">
-          <span class="stage-text">{{ stream.currentStage }}</span>
+          <span class="stage-text">{{ taskStore.task.currentStage }}</span>
           <span class="count-text">
-            已生成 {{ stream.generatedCount }} / {{ stream.totalCount }}
-            <span class="progress-percent">({{ stream.progress }}%)</span>
+            已生成 {{ taskStore.task.generatedCount }} / {{ taskStore.task.totalCount }}
+            <span class="progress-percent">({{ taskStore.task.progress }}%)</span>
           </span>
         </div>
-        <n-progress :percentage="stream.progress" :height="8" :show-indicator="false" />
+        <n-progress :percentage="taskStore.task.progress" :height="8" :show-indicator="false" />
       </div>
       <div ref="streamBodyRef" class="streamBody">
-        <div v-if="stream.lines.length > 0" class="streamLines"><div v-for="(l, i) in stream.lines" :key="i">{{ l }}</div></div>
+        <div v-if="taskStore.task.lines.length > 0" class="streamLines"><div v-for="(l, i) in taskStore.task.lines" :key="i">{{ l }}</div></div>
         <div v-else class="streamHint">等待事件流…</div>
-        <div v-if="stream.output" class="streamOutput"><div class="streamOutputTitle">模型输出（实时）</div><pre class="streamOutputPre">{{ stream.output }}</pre></div>
+        <div v-if="taskStore.task.output" class="streamOutput"><div class="streamOutputTitle">模型输出（实时）</div><pre class="streamOutputPre">{{ taskStore.task.output }}</pre></div>
       </div>
     </div>
   </div>

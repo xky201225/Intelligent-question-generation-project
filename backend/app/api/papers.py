@@ -23,6 +23,11 @@ try:
 except Exception:
     docx2pdf_convert = None
 
+try:
+    import pythoncom
+except ImportError:
+    pythoncom = None
+
 papers_bp = Blueprint("papers", __name__)
 
 
@@ -769,11 +774,14 @@ def export_pdf(paper_id: int):
         # Use temp files for conversion
         with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp_docx:
             doc.save(tmp_docx.name)
-            tmp_docx_path = tmp_docx.name
+            tmp_docx_path = os.path.abspath(tmp_docx.name)
             
         tmp_pdf_path = tmp_docx_path.replace(".docx", ".pdf")
         
         try:
+            if pythoncom:
+                pythoncom.CoInitialize()
+            
             docx2pdf_convert(tmp_docx_path, tmp_pdf_path)
             
             with open(tmp_pdf_path, "rb") as f:
@@ -786,9 +794,21 @@ def export_pdf(paper_id: int):
                 mimetype='application/pdf'
             )
         finally:
+            if pythoncom:
+                pythoncom.CoUninitialize()
+            
             if os.path.exists(tmp_docx_path):
-                os.remove(tmp_docx_path)
+                try:
+                    os.remove(tmp_docx_path)
+                except:
+                    pass
             if os.path.exists(tmp_pdf_path):
-                os.remove(tmp_pdf_path)
+                try:
+                    os.remove(tmp_pdf_path)
+                except:
+                    pass
     except Exception as e:
+        print(f"PDF Export Error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": {"message": f"PDF转换失败: {str(e)}", "type": "ConversionError"}}), 500

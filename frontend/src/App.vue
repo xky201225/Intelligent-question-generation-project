@@ -25,11 +25,14 @@ import {
 } from '@vicons/ionicons5'
 import { http } from './api/http'
 import { clearAuth, getUser } from './auth'
+import { useTaskStore } from './stores/taskStore'
+import { NProgress } from 'naive-ui'
 
 const apiStatus = ref('unknown') // unknown, success, error
 const route = useRoute()
 const router = useRouter()
 const user = ref(getUser())
+const taskStore = useTaskStore()
 
 const isDarkMode = ref(false)
 const collapsed = ref(true) // 默认折叠
@@ -253,6 +256,23 @@ onUnmounted(() => {
             <n-layout-header bordered class="header">
               <div class="header-left"></div>
               <div class="right">
+                <div v-if="taskStore.task.status === 'running' || taskStore.task.status === 'done'" class="task-status-bar" @click="() => { router.push(taskStore.task.sourcePath); taskStore.showPanel = true }">
+                  <n-progress
+                    v-if="taskStore.task.status === 'running'"
+                    type="circle"
+                    :percentage="taskStore.task.progress"
+                    :status="taskStore.task.status === 'error' ? 'error' : 'default'"
+                    style="width: 24px; height: 24px"
+                    :stroke-width="4"
+                    :show-indicator="false"
+                  >
+                  </n-progress>
+                  <n-icon v-else size="20" color="#18a058"><CheckmarkCircleOutline /></n-icon>
+                  <span class="task-status-text">
+                    {{ taskStore.task.status === 'running' ? 'AI处理中...' : '处理完成' }}
+                  </span>
+                </div>
+
                 <div v-if="user" class="user">
                   <span class="userName">{{ user.name }}</span>
                   <n-button size="small" @click="logout">
@@ -384,5 +404,40 @@ onUnmounted(() => {
 }
 :deep(.n-button) {
   border-radius: 14px;
+}
+
+.task-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--n-color-embedded);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid var(--n-border-color);
+  animation: slideIn 0.5s ease-out;
+}
+
+.task-status-bar:hover {
+  background: var(--n-color-hover);
+  transform: translateY(1px);
+}
+
+.task-status-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--n-text-color-2);
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>
