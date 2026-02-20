@@ -20,6 +20,7 @@ import {
   TicketOutline,
   SunnyOutline,
   MoonOutline,
+  SyncOutline,
   WifiOutline,
   CloudOfflineOutline
 } from '@vicons/ionicons5'
@@ -35,6 +36,7 @@ const user = ref(getUser())
 const taskStore = useTaskStore()
 
 const isDarkMode = ref(false)
+const themeMode = ref('auto') // auto | light | dark
 const collapsed = ref(true) // 默认折叠
 let themeMediaQuery = null
 let themeMediaListener = null
@@ -52,39 +54,88 @@ const themeOverrides = computed(() => ({
   }
 }))
 
-function applyTheme(nextIsDark) {
-  const mode = nextIsDark ? 'dark' : 'light'
-  document.documentElement.dataset.theme = mode
+function ensureThemeListener() {
+  if (!themeMediaQuery) {
+    themeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+  }
+  if (!themeMediaListener) {
+    themeMediaListener = (e) => {
+      if (themeMode.value !== 'auto') return
+      applyThemeByMode('auto', e.matches)
+    }
+    themeMediaQuery.addEventListener('change', themeMediaListener)
+  }
+}
+
+function removeThemeListener() {
+  if (themeMediaQuery && themeMediaListener) {
+    themeMediaQuery.removeEventListener('change', themeMediaListener)
+    themeMediaListener = null
+  }
+}
+
+function applyThemeByMode(mode, systemIsDark = null) {
+  let nextIsDark = false
+  if (mode === 'dark') nextIsDark = true
+  else if (mode === 'light') nextIsDark = false
+  else {
+    if (!themeMediaQuery) {
+      themeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    }
+    nextIsDark = systemIsDark ?? themeMediaQuery.matches
+  }
+
+  isDarkMode.value = nextIsDark
+  const applied = nextIsDark ? 'dark' : 'light'
+  document.documentElement.dataset.theme = applied
   localStorage.setItem('theme', mode)
   const metaColorScheme = document.querySelector('meta[name="color-scheme"]')
   if (metaColorScheme) {
-    metaColorScheme.content = mode
+    metaColorScheme.content = applied
   }
 }
 
 function initTheme() {
   const saved = localStorage.getItem('theme')
-  if (saved === 'dark' || saved === 'light') {
-    isDarkMode.value = saved === 'dark'
-    applyTheme(isDarkMode.value)
-    return
+  if (saved === 'dark' || saved === 'light' || saved === 'auto') {
+    themeMode.value = saved
+  } else {
+    themeMode.value = 'auto'
   }
 
-  themeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-  isDarkMode.value = themeMediaQuery.matches
-  applyTheme(isDarkMode.value)
-  themeMediaListener = (e) => {
-    if (localStorage.getItem('theme')) return
-    isDarkMode.value = e.matches
-    applyTheme(isDarkMode.value)
+  if (themeMode.value === 'auto') {
+    ensureThemeListener()
+  } else {
+    removeThemeListener()
   }
-  themeMediaQuery.addEventListener('change', themeMediaListener)
+
+  applyThemeByMode(themeMode.value)
 }
 
 function toggleTheme() {
-  isDarkMode.value = !isDarkMode.value
-  applyTheme(isDarkMode.value)
+  const next =
+    themeMode.value === 'auto'
+      ? 'light'
+      : themeMode.value === 'light'
+        ? 'dark'
+        : 'auto'
+  themeMode.value = next
+
+  if (next === 'auto') {
+    ensureThemeListener()
+  } else {
+    removeThemeListener()
+  }
+
+  applyThemeByMode(next)
 }
+
+const themeToggleText = computed(() => {
+  if (themeMode.value === 'auto') {
+    return '自动'
+  }
+  return isDarkMode.value ? '切换到亮色' : '切换到暗色'
+})
 
 let timer = null
 
@@ -175,9 +226,7 @@ watch(
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
-  if (themeMediaQuery && themeMediaListener) {
-    themeMediaQuery.removeEventListener('change', themeMediaListener)
-  }
+  removeThemeListener()
 })
 </script>
 
@@ -215,19 +264,21 @@ onUnmounted(() => {
                 <template #trigger>
                   <div class="footer-item" @click="toggleTheme">
                     <n-icon size="18" class="footer-icon">
-                      <SunnyOutline v-if="isDarkMode" />
+                      <SyncOutline v-if="themeMode === 'auto'" />
+                      <SunnyOutline v-else-if="isDarkMode" />
                       <MoonOutline v-else />
                     </n-icon>
                   </div>
                 </template>
-                {{ isDarkMode ? '切换到亮色' : '切换到暗色' }}
+                {{ themeToggleText }}
               </n-tooltip>
               <div v-else class="footer-item" @click="toggleTheme">
                 <n-icon size="18" class="footer-icon">
-                  <SunnyOutline v-if="isDarkMode" />
+                  <SyncOutline v-if="themeMode === 'auto'" />
+                  <SunnyOutline v-else-if="isDarkMode" />
                   <MoonOutline v-else />
                 </n-icon>
-                <span class="footer-text">{{ isDarkMode ? '切换到亮色' : '切换到暗色' }}</span>
+                <span class="footer-text">{{ themeToggleText }}</span>
               </div>
 
               <!-- API 连通性状态 -->
