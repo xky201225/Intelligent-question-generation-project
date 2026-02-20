@@ -71,6 +71,21 @@ body {
   --table-row-hover: rgba(51, 65, 85, 0.5);
 }
 
+:root[data-theme="dark"] #app {
+  background-color: #18181c;
+}
+
+:root[data-theme="dark"] .login-page {
+  background: #18181c !important;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+:root[data-theme="dark"] .login-page .hero {
+  background: #232327 !important;
+  border: 1px solid #2f2f34;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
 /* 深色模式下表格统一覆盖，防止页面级浅色样式污染 */
 :root[data-theme="dark"] .n-data-table {
   border-color: var(--table-border) !important;
