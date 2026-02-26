@@ -80,6 +80,39 @@ const qDialog = reactive({
 
 const types = ref([])
 const typeOptions = computed(() => types.value.map(t => ({ label: t.type_name, value: t.type_id })))
+const subjectOptions = computed(() => subjects.value.map(s => ({ label: s.subject_name, value: s.subject_id })))
+const difficultyOptions = computed(() => difficulties.value.map(d => ({ label: d.difficulty_name, value: d.difficulty_id })))
+
+// Dialog textbook/chapter resources
+const dialogTextbookId = ref(null)
+const dialogTextbooks = ref([])
+const dialogChapterTree = ref([])
+const dialogTextbookOptions = computed(() => dialogTextbooks.value.map(t => ({ label: t.textbook_name + (t.author ? '-' + t.author : ''), value: t.textbook_id })))
+
+async function loadDialogTextbooks() {
+  const resp = await http.get('/textbooks', {
+    params: qDialog.form.subject_id ? { subject_id: qDialog.form.subject_id } : {},
+  })
+  dialogTextbooks.value = resp.data.items || []
+}
+
+async function loadDialogChapters() {
+  if (!dialogTextbookId.value) {
+    dialogChapterTree.value = []
+    return
+  }
+  const resp = await http.get(`/textbooks/${dialogTextbookId.value}/chapters`)
+  dialogChapterTree.value = resp.data.tree || []
+}
+
+function treeToOptions(tree) {
+  return tree.map(node => ({
+    label: node.chapter_name,
+    value: node.chapter_id,
+    children: node.children && node.children.length > 0 ? treeToOptions(node.children) : undefined
+  }))
+}
+const dialogChapterCascaderOptions = computed(() => treeToOptions(dialogChapterTree.value))
 async function loadDicts() {
   const [s, t, d] = await Promise.all([
     http.get('/dicts/subjects'),
@@ -213,6 +246,21 @@ function openQEdit(row) {
     question_analysis: row.question_analysis,
     question_score: row.question_score
   }
+  dialogTextbookId.value = null
+  dialogTextbooks.value = []
+  dialogChapterTree.value = []
+  // 推断教材：根据章节获取所属教材
+  ;(async () => {
+    try {
+      if (row.chapter_id) {
+        const meta = await http.get(`/textbooks/chapters/${row.chapter_id}`)
+        dialogTextbookId.value = meta.data?.item?.textbook_id || null
+        qDialog.form.subject_id = row.subject_id
+        await loadDialogTextbooks()
+        await loadDialogChapters()
+      }
+    } catch {}
+  })()
   qDialog.visible = true
 }
 
@@ -245,6 +293,15 @@ async function removeQ(row) {
   })
 }
 
+const detailDialog = reactive({
+  visible: false,
+  item: null
+})
+function openDetail(row) {
+  detailDialog.item = row
+  detailDialog.visible = true
+}
+
 const qColumns = [
   { type: 'selection' },
   { title: 'ID', key: 'question_id', width: 80 },
@@ -257,7 +314,17 @@ const qColumns = [
     if (row.review_status === 2) return h(NTag, { type: 'error' }, { default: () => '未通过' })
     return h(NTag, { type: 'warning' }, { default: () => '待审核' })
   }},
-  { title: '题干', key: 'question_content', ellipsis: { tooltip: true } },
+  {
+    title: '题干',
+    key: 'question_content',
+    ellipsis: { tooltip: true },
+    render(row) {
+      return h('div', {
+        style: { cursor: 'pointer', color: 'var(--n-text-color)' },
+        onClick: () => openDetail(row)
+      }, row.question_content?.substring(0, 100))
+    }
+  },
   { title: '操作', key: 'actions', width: 140, render(row) {
     return h('div', { style: { display: 'flex', gap: '6px' } }, [
       h(NButton, { size: 'small', onClick: () => openQEdit(row) }, { default: () => '编辑' }),
@@ -583,8 +650,48 @@ onMounted(async () => {
 
         <n-modal v-model:show="qDialog.visible" preset="card" title="编辑题目" style="width: 720px">
           <n-form label-placement="left" label-width="90px">
+            <n-form-item label="科目">
+              <n-select
+                v-model:value="qDialog.form.subject_id"
+                :options="subjectOptions"
+                placeholder="科目"
+                filterable
+                @update:value="async () => {
+                  dialogTextbookId.value = null
+                  qDialog.form.chapter_id = null
+                  dialogChapterTree.value = []
+                  await loadDialogTextbooks()
+                }"
+              />
+            </n-form-item>
+            <n-form-item label="教材">
+              <n-select
+                v-model:value="dialogTextbookId"
+                :options="dialogTextbookOptions"
+                placeholder="教材"
+                filterable
+                clearable
+                @update:value="async () => {
+                  qDialog.form.chapter_id = null
+                  await loadDialogChapters()
+                }"
+              />
+            </n-form-item>
+            <n-form-item label="章节">
+              <n-cascader
+                v-model:value="qDialog.form.chapter_id"
+                :options="dialogChapterCascaderOptions"
+                check-strategy="child"
+                clearable
+                placeholder="章节"
+                :disabled="!dialogTextbookId"
+              />
+            </n-form-item>
             <n-form-item label="题型">
               <n-select v-model:value="qDialog.form.type_id" :options="typeOptions" placeholder="题型" filterable />
+            </n-form-item>
+            <n-form-item label="难度">
+              <n-select v-model:value="qDialog.form.difficulty_id" :options="difficultyOptions" placeholder="难度" filterable />
             </n-form-item>
             <n-form-item label="题干">
               <n-input v-model:value="qDialog.form.question_content" type="textarea" :rows="5" />
@@ -604,6 +711,25 @@ onMounted(async () => {
               <n-button @click="qDialog.visible = false">取消</n-button>
               <n-button type="primary" @click="saveQ">保存</n-button>
             </div>
+          </template>
+        </n-modal>
+
+        <n-modal v-model:show="detailDialog.visible" preset="card" title="题目详情" style="width: 600px">
+          <div v-if="detailDialog.item">
+            <n-descriptions :column="1" bordered>
+              <n-descriptions-item label="题干">
+                <div style="white-space: pre-wrap">{{ detailDialog.item.question_content }}</div>
+              </n-descriptions-item>
+              <n-descriptions-item label="答案">
+                <div style="white-space: pre-wrap">{{ detailDialog.item.question_answer }}</div>
+              </n-descriptions-item>
+              <n-descriptions-item label="解析">
+                <div style="white-space: pre-wrap">{{ detailDialog.item.question_analysis }}</div>
+              </n-descriptions-item>
+            </n-descriptions>
+          </div>
+          <template #footer>
+            <n-button @click="detailDialog.visible = false">关闭</n-button>
           </template>
         </n-modal>
       </n-tab-pane>
