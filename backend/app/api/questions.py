@@ -65,7 +65,6 @@ def _parse_csv_ints(v: str | None) -> list[int]:
 def search_questions():
     q = request.args.get("q", type=str)
     subject_id = request.args.get("subject_id", type=int)
-    # chapter_id = request.args.get("chapter_id", type=int) # 旧逻辑
     chapter_ids_str = request.args.get("chapter_id", type=str)
     ids_str = request.args.get("ids", type=str)
 
@@ -75,6 +74,7 @@ def search_questions():
     author = request.args.get("author", type=str)
     publisher = request.args.get("publisher", type=str)
     review_status = request.args.get("review_status", type=int)
+    reviewer = request.args.get("reviewer", type=str)
 
     page = max(1, request.args.get("page", default=1, type=int))
     page_size = min(1000, max(1, request.args.get("page_size", default=20, type=int)))
@@ -145,6 +145,8 @@ def search_questions():
         where.append(tb.c.publisher.like(f"%{publisher}%"))
     if review_status is not None:
         where.append(t.c.review_status == review_status)
+    if reviewer:
+        where.append(t.c.reviewer == reviewer)
     if q:
         like = f"%{q}%"
         where.append(or_(t.c.question_content.like(like), t.c.question_analysis.like(like)))
@@ -192,6 +194,17 @@ def search_questions():
         rows = session.execute(stmt).mappings().all()
         items = [{k: _to_jsonable(v) for k, v in dict(r).items()} for r in rows]
         return jsonify({"items": items, "total": total, "page": page, "page_size": page_size})
+    except SQLAlchemyError as err:
+        return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
+
+
+@questions_bp.get("/reviewers")
+def list_reviewers():
+    t = _table("question_bank")
+    try:
+        stmt = select(t.c.reviewer).where(and_(t.c.reviewer != None, t.c.reviewer != "")).distinct().order_by(t.c.reviewer)
+        rows = get_session(current_app).execute(stmt).all()
+        return jsonify({"items": [r[0] for r in rows if r[0]]})
     except SQLAlchemyError as err:
         return jsonify({"error": {"message": str(err), "type": err.__class__.__name__}}), 500
 

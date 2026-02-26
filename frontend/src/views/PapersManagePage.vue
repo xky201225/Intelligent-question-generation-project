@@ -21,11 +21,19 @@ const showPreview = ref(false)
 const papers = ref([])
 const subjects = ref([])
 const textbooks = ref([])
+const reviewers = ref([])
+const reviewerQuery = ref('')
+const filteredReviewers = computed(() => {
+  const q = (reviewerQuery.value || '').trim().toLowerCase()
+  if (!q) return reviewers.value
+  return reviewers.value.filter(r => String(r || '').toLowerCase().includes(q))
+})
 
 const filters = reactive({
   subject_id: null,
   textbook_id: null,
   publisher: null,
+  reviewer: null,
 })
 
 const publisherOptions = computed(() => {
@@ -35,6 +43,15 @@ const publisherOptions = computed(() => {
   }
   return Array.from(set).map(p => ({ label: p, value: p }))
 })
+
+async function loadReviewers() {
+  try {
+    const res = await http.get('/papers/reviewers')
+    reviewers.value = res.data.items || []
+  } catch (e) {
+    console.error(e)
+  }
+}
 
 const selectedPaperIds = ref([])
 const selectedPaperId = ref(null)
@@ -109,6 +126,7 @@ async function loadPapers() {
     if (filters.subject_id) params.subject_id = filters.subject_id
     if (filters.textbook_id) params.textbook_id = filters.textbook_id
     if (filters.publisher) params.publisher = filters.publisher
+    if (filters.reviewer) params.reviewer = filters.reviewer
     
     if (mode.value === 'export') {
       params.review_status = 1
@@ -274,6 +292,7 @@ async function batchDelete() {
 onMounted(async () => {
   await loadDicts()
   await loadTextbooks()
+  await loadReviewers()
   await loadPapers()
 })
 
@@ -395,6 +414,28 @@ const tableColumns = [
                   </n-tag>
                 </template>
                 <span v-else class="empty-hint">{{ filters.subject_id ? '暂无数据' : '请先选择科目' }}</span>
+              </div>
+            </div>
+
+            <div class="filter-row">
+              <div class="filter-label">审核人</div>
+              <div class="filter-content filter-tags">
+                <n-input v-model:value="reviewerQuery" placeholder="输入姓名筛选" clearable style="width: 180px; margin-right: 8px" />
+                <template v-if="filteredReviewers.length > 0">
+                  <n-tag
+                    v-for="r in filteredReviewers"
+                    :key="r"
+                    :bordered="false"
+                    :class="['filter-tag', filters.reviewer === r ? 'tag-selected' : '']"
+                    @click="async () => {
+                      filters.reviewer = filters.reviewer === r ? null : r;
+                      await loadPapers()
+                    }"
+                  >
+                    {{ r }}
+                  </n-tag>
+                </template>
+                <span v-else class="empty-hint">{{ reviewers.length > 0 ? '无匹配' : '暂无审核人' }}</span>
               </div>
             </div>
 

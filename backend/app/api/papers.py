@@ -344,14 +344,16 @@ def list_reviewers():
 @papers_bp.get("")
 def list_papers():
     paper = _table("exam_paper")
+    history = _table("paper_export_history")
     subject_id = request.args.get("subject_id", type=int)
     textbook_id = request.args.get("textbook_id", type=int)
     reviewer = request.args.get("reviewer")
     author = request.args.get("author")
     publisher = request.args.get("publisher")
     review_status = request.args.get("review_status", type=int)
+    include_export_count = request.args.get("include_export_count", type=int) == 1
 
-    stmt = select(
+    base_select = [
         paper.c.paper_id,
         paper.c.paper_name,
         paper.c.subject_id,
@@ -362,7 +364,13 @@ def list_papers():
         paper.c.review_time,
         paper.c.create_time,
         paper.c.update_time,
-    )
+    ]
+    if include_export_count:
+        export_sub = select(history.c.paper_id, func.count().label("export_count")).group_by(history.c.paper_id).subquery()
+        base_select.append(func.coalesce(export_sub.c.export_count, 0).label("export_count"))
+        stmt = select(*base_select).outerjoin(export_sub, export_sub.c.paper_id == paper.c.paper_id)
+    else:
+        stmt = select(*base_select)
     if subject_id is not None:
         stmt = stmt.where(paper.c.subject_id == subject_id)
     
@@ -663,6 +671,7 @@ def export_word(paper_id: int):
     paper = _table("exam_paper")
     rel = _table("paper_question_relation")
     qb = _table("question_bank")
+    history = _table("paper_export_history")
 
     try:
         p = session.execute(select(paper).where(paper.c.paper_id == paper_id)).mappings().first()
@@ -704,7 +713,27 @@ def export_word(paper_id: int):
         f = BytesIO()
         doc.save(f)
         f.seek(0)
-        
+
+        try:
+            version_id = str(uuid.uuid4())
+            base_dir = _export_base_dir(paper_id)
+            filename = f"{version_id}.docx"
+            path = os.path.join(base_dir, filename)
+            with open(path, "wb") as out:
+                out.write(f.getbuffer())
+            session.execute(
+                insert(history).values(
+                    paper_id=paper_id,
+                    version_id=version_id,
+                    type="word",
+                    filename=filename,
+                    download_name=f"{p['paper_name']}.docx",
+                )
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+
         filename = f"{p['paper_name']}.docx"
         try:
             from urllib.parse import quote
@@ -733,6 +762,7 @@ def export_pdf(paper_id: int):
     paper = _table("exam_paper")
     rel = _table("paper_question_relation")
     qb = _table("question_bank")
+    history = _table("paper_export_history")
 
     try:
         p = session.execute(select(paper).where(paper.c.paper_id == paper_id)).mappings().first()
@@ -804,7 +834,29 @@ def export_pdf(paper_id: int):
                     pass
             if os.path.exists(tmp_pdf_path):
                 try:
-                    os.remove(tmp_pdf_path)
+                    version_id = str(uuid.uuid4())
+                    base_dir = _export_base_dir(paper_id)
+                    filename = f"{version_id}.pdf"
+                    final_path = os.path.join(base_dir, filename)
+                    try:
+                        os.makedirs(base_dir, exist_ok=True)
+                        with open(tmp_pdf_path, "rb") as rf, open(final_path, "wb") as wf:
+                            wf.write(rf.read())
+                        try:
+                            session.execute(
+                                insert(history).values(
+                                    paper_id=paper_id,
+                                    version_id=version_id,
+                                    type="pdf",
+                                    filename=filename,
+                                    download_name=f"{p['paper_name']}.pdf",
+                                )
+                            )
+                            session.commit()
+                        except Exception:
+                            session.rollback()
+                    finally:
+                        os.remove(tmp_pdf_path)
                 except:
                     pass
     except Exception as e:

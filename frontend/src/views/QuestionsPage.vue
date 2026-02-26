@@ -23,6 +23,13 @@ const textbooks = ref([])
 const chapters = ref([])
 const chapterTree = ref([])
 const selectedMainChapters = ref([]) // 选中的大章节ID列表
+const reviewers = ref([])
+const reviewerQuery = ref('')
+const filteredReviewers = computed(() => {
+  const q = (reviewerQuery.value || '').trim().toLowerCase()
+  if (!q) return reviewers.value
+  return reviewers.value.filter(r => String(r || '').toLowerCase().includes(q))
+})
 
 const filter = reactive({
   q: '',
@@ -32,6 +39,7 @@ const filter = reactive({
   type_id: [],
   difficulty_id: [],
   review_status: 1,
+  reviewer: null,
   page: 1,
   page_size: 20,
 })
@@ -107,6 +115,15 @@ async function loadChapters() {
   const resp = await http.get(`/textbooks/${filter.textbook_id}/chapters`)
   chapters.value = resp.data.items || []
   chapterTree.value = resp.data.tree || []
+}
+
+async function loadReviewers() {
+  try {
+    const res = await http.get('/questions/reviewers')
+    reviewers.value = res.data.items || []
+  } catch (e) {
+    // ignore
+  }
 }
 
 async function loadDialogChapters() {
@@ -226,10 +243,12 @@ async function search() {
       page_size: filter.page_size,
       q: filter.q || undefined,
       subject_id: filter.subject_id || undefined,
+      textbook_id: filter.textbook_id || undefined,
       chapter_id: Array.isArray(filter.chapter_id) && filter.chapter_id.length > 0 ? filter.chapter_id.join(',') : undefined,
       type_id: Array.isArray(filter.type_id) && filter.type_id.length > 0 ? filter.type_id.join(',') : undefined,
       difficulty_id: Array.isArray(filter.difficulty_id) && filter.difficulty_id.length > 0 ? filter.difficulty_id.join(',') : undefined,
       review_status: filter.review_status === null ? undefined : filter.review_status,
+      reviewer: filter.reviewer || undefined,
     }
     const resp = await http.get('/questions', { params })
     data.items = resp.data.items || []
@@ -621,6 +640,7 @@ function applyBatchSet() {
 onMounted(async () => {
   await loadDicts()
   await loadTextbooks()
+  await loadReviewers()
   await search()
 
   if (taskStore.task.status === 'done' && taskStore.showPanel && !aiReviewDialog.visible && taskStore.task.items.length > 0) {
@@ -785,8 +805,9 @@ function handlePageSizeChange(pageSize) {
                   @click="async () => {
                     filter.textbook_id = filter.textbook_id === t.textbook_id ? null : t.textbook_id;
                     filter.chapter_id = [];
-                    selectedMainChapters = [];
+                    selectedMainChapters.value = [];
                     await loadChapters()
+                    await search()
                   }"
                 >
                   {{ t.textbook_name }}{{ t.author ? ' - ' + t.author : '' }}
@@ -884,6 +905,25 @@ function handlePageSizeChange(pageSize) {
                 <template #icon><n-icon><SearchOutline /></n-icon></template>
                 查询
               </n-button>
+            </div>
+          </div>
+
+          <div class="filter-row">
+            <div class="filter-label">审核人</div>
+            <div class="filter-content filter-tags">
+              <n-input v-model:value="reviewerQuery" placeholder="输入姓名筛选" clearable style="width: 180px; margin-right: 8px" />
+              <template v-if="filteredReviewers.length > 0">
+                <n-tag
+                  v-for="r in filteredReviewers"
+                  :key="r"
+                  :bordered="false"
+                  :class="['filter-tag', filter.reviewer === r ? 'tag-selected' : '']"
+                  @click="() => { filter.reviewer = filter.reviewer === r ? null : r; search() }"
+                >
+                  {{ r }}
+                </n-tag>
+              </template>
+              <span v-else class="empty-hint">{{ reviewers.length > 0 ? '无匹配' : '暂无审核人' }}</span>
             </div>
           </div>
         </template>

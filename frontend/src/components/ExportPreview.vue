@@ -393,13 +393,13 @@ function formatQuestionContent(content) {
             <span class="toggle-text">{{ showAnswers ? '显示答案/解析' : '隐藏答案/解析' }}</span>
           </div>
           <n-button @click="editDrawerVisible = true">编辑内容</n-button>
-          <n-button @click="doExportWord">
+          <n-button class="preview-action" @click="doExportWord">
             <template #icon>
               <n-icon><DownloadOutline /></n-icon>
             </template>
             导出 Word
           </n-button>
-          <n-button @click="doExportPdf">
+          <n-button class="preview-action" @click="doExportPdf">
             <template #icon>
               <n-icon><PrintOutline /></n-icon>
             </template>
@@ -474,8 +474,9 @@ function formatQuestionContent(content) {
   justify-content: space-between;
   align-items: center;
   padding: 14px 20px;
-  background: #fff;
-  border-bottom: 1px solid #e8e8e8;
+  background: var(--n-color-modal);
+  border-bottom: 1px solid var(--n-border-color);
+  color: var(--n-text-color);
 }
 
 .header-left {
@@ -504,6 +505,56 @@ function formatQuestionContent(content) {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+:global(:root[data-theme="dark"] .preview-modal .preview-header) {
+  background: #111827 !important;
+  border-bottom: 1px solid #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+:global(:root[data-theme="dark"] .preview-modal .preview-header .n-button) {
+  color: #f9fafb !important;
+  background: #1f2937 !important;
+  border-color: #374151 !important;
+}
+
+:global(:root[data-theme="dark"] .preview-modal .preview-header .n-button .n-button__content),
+:global(:root[data-theme="dark"] .preview-modal .preview-header .n-button .n-button__icon) {
+  color: #f9fafb !important;
+}
+
+:global(:root[data-theme="dark"] .preview-modal .preview-header .n-button--primary) {
+  color: #ffffff !important;
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+}
+
+:global(:root[data-theme="dark"] .preview-modal .preview-header .n-radio-button) {
+  color: #e5e7eb !important;
+  background: #1f2937 !important;
+  border-color: #374151 !important;
+}
+
+:global(:root[data-theme="dark"] .preview-modal .preview-header .n-radio-button .n-radio-button__label) {
+  color: #e5e7eb !important;
+}
+
+:global(:root[data-theme="dark"] .preview-modal .preview-header .n-radio-button.n-radio-button--checked) {
+  color: #ffffff !important;
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+}
+
+:global(:root[data-theme="dark"] .preview-modal .preview-header .preview-action) {
+  color: #f9fafb !important;
+  background: #1f2937 !important;
+  border-color: #374151 !important;
+}
+
+:global(:root[data-theme="dark"] .preview-modal .preview-header .preview-action:hover) {
+  background: #374151 !important;
+  border-color: #4b5563 !important;
 }
 
 .answer-toggle {

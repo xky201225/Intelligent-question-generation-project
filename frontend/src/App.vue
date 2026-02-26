@@ -20,6 +20,7 @@ import {
   TicketOutline,
   SunnyOutline,
   MoonOutline,
+  PersonCircleOutline,
   SyncOutline,
   WifiOutline,
   CloudOfflineOutline
@@ -197,10 +198,15 @@ const menuOptions = computed(() => [
       { label: '试卷审核', key: '/paper-review', icon: renderIcon(RibbonOutline) }
     ]
   },
+  // {
+  //   label: '答题卡',
+  //   key: '/answer-sheets',
+  //   icon: renderIcon(TicketOutline)
+  // },
   {
-    label: '答题卡',
-    key: '/answer-sheets',
-    icon: renderIcon(TicketOutline)
+    label: '个人中心',
+    key: '/me',
+    icon: renderIcon(PersonCircleOutline)
   }
 ])
 

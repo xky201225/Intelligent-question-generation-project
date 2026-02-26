@@ -9,6 +9,7 @@ import PapersManagePage from '../views/PapersManagePage.vue'
 import AnswerSheetsPage from '../views/AnswerSheetsPage.vue'
 import TextbooksPage from '../views/TextbooksPage.vue'
 import LoginPage from '../views/LoginPage.vue'
+import PersonalCenter from '../views/PersonalCenter.vue'
 
 import { getToken } from '../auth'
 
@@ -29,6 +30,7 @@ export const router = createRouter({
     { path: '/papers', component: PapersManagePage, meta: { requiresAuth: true, title: '试卷编辑/导出', mode: 'export' } },
     { path: '/paper-review', component: PapersManagePage, meta: { requiresAuth: true, title: '试卷审核', mode: 'review' } },
     { path: '/answer-sheets', component: AnswerSheetsPage, meta: { requiresAuth: true, title: '答题卡' } },
+    { path: '/me', component: PersonalCenter, meta: { requiresAuth: true, title: '个人中心' } },
   ],
 })
 
